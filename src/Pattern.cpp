@@ -278,7 +278,7 @@ uint8_t runningLightsCounter = 0;  // Schrittzähler für Running Lights
 
 // Running Lights-Effekt
 void runningLights() {
-    uint8_t size = 10;  // Adjust for smoothness
+    uint8_t size = 1;  // Adjust for smoothness
     uint8_t sineIncr = (255 / numleds) * size;
     sineIncr = sineIncr > 1 ? sineIncr : 1;
 
@@ -290,8 +290,6 @@ void runningLights() {
 
     runningLightsCounter++;
     if (runningLightsCounter == 255) runningLightsCounter = 0;
-
-    FastLED.show();
 }
 
 // Hyper Sparkle-Effekt
@@ -299,11 +297,10 @@ void hyperSparkle() {
   CRGB color = ColorFromPalette(currentPalette, hue);
     fill_solid(leds, numleds, color);
     uint8_t size = 1;
-    for (int i = 0; i < 8; i++) {
-      int pos = random(numleds - size);
+    for (uint8_t i = 0; i < 8; i++) {
+      uint8_t pos = random(numleds - size);
       fill_solid(leds + pos, size, CRGB::White);
     }
-    FastLED.show();
 }
 
 uint8_t cometPosition = 0;  // Position des Kometen
@@ -315,7 +312,6 @@ void cometEffect() {
     fadeToBlackBy(leds, numleds, 2);  // Fade with a value of 20 (can be adjusted)
     leds[cometPosition] = color;
     cometPosition = (cometPosition + cometSpeed) % numleds;
-    FastLED.show();
 }
 
 // Funktion, um Feuerwerks-Explosionen zu simulieren
@@ -327,17 +323,16 @@ void fireworkEffect() {
     // Bestimme eine zufällige Anzahl an Funken
     uint8_t numSparks = random(10, 30);  // Anzahl der Funken
     // Erstelle Funken an zufälligen Positionen
-    for (int i = 0; i < numSparks; i++) {
-      int pos = random(numleds);  // Zufällige Position für den Funken
+    for (uint8_t i = 0; i < numSparks; i++) {
+      uint8_t pos = random(numleds);  // Zufällige Position für den Funken
       leds[pos] = color;           // Setze die Farbe an der Position
     }
-    FastLED.show();  // LEDs anzeigen
 }
 
 void fireChaseEffect() {
   const uint8_t step = 255 / numleds; // Schrittweite für Farbverlauf
   static uint8_t hueOffset = 0;        // Offset für Farbverschiebung
-  for (int i = 0; i < numleds / 2; i++) {
+  for (uint8_t i = 0; i < numleds / 2; i++) {
     // Effekt von der Mitte nach außen (links und rechts)
     leds[i] = ColorFromPalette(HeatColors_p, hueOffset + i * step);
     leds[numleds - 1 - i] = ColorFromPalette(HeatColors_p, hueOffset + i * step);
@@ -347,7 +342,6 @@ void fireChaseEffect() {
     leds[numleds / 2] = ColorFromPalette(HeatColors_p, hueOffset);
   }
   hueOffset += 2; // Farbe animieren (je nach Geschwindigkeit anpassen)
-  FastLED.show();
 }
 
 // List of patterns to cycle through.  Each is defined as a separate function below.
@@ -377,13 +371,13 @@ SimplePatternList patterns = {
 // Array mit den Namen der Muster (manuell zugeordnet)
 const char* patternNames[] = {
   "Pride",
-  "Color Waves currentPalette",
+  "Color Waves contains_Palette",
   "Chase Rainbow",
   "Chase Rainbow 2",
-  "Chase Palette currentPalette",
-  "Chase Palette 2 currentPalette",
+  "Chase Palette contains_Palette",
+  "Chase Palette 2 contains_Palette",
   "Solid Palette",
-  "Solid Rainbow currentPalette",
+  "Solid Rainbow contains_Palette",
   "Rainbow",
   "Rainbow with Glitter",
   "Confetti",
@@ -391,11 +385,75 @@ const char* patternNames[] = {
   "Juggle",
   "BPM",
   "RunningLights",
-  "HyperSparkle currentPalette",
-  "CometEffect currentPalette",
-  "FireworkEffect currentPalette",
+  "HyperSparkle contains_Palette",
+  "CometEffect contains_Palette",
+  "FireworkEffect contains_Palette",
   "FireChaseEffect"
 };
 
-//const uint8_t paletteCount = sizeof(palettes) / sizeof(TProgmemRGBGradientPaletteRef);
 uint8_t patternsCount = sizeof(patterns) / sizeof(patterns[0]);
+
+
+uint8_t runningLightsCounterx = 0;  // Schrittzähler für Running Lights
+
+void droneDetected() {
+    uint8_t size = 2;  // Adjust for smoothness
+    uint8_t sineIncr = (255 / numleds) * size;
+    sineIncr = sineIncr > 1 ? sineIncr : 1;
+
+    for (int i = 0; i < numleds; i++) {
+      uint8_t lum = sineWave((i + runningLightsCounterx) * sineIncr);
+      CRGB color = ColorFromPalette(RainbowColors_p, lum);
+      leds[i] = color;
+    }
+
+    runningLightsCounterx++;
+    if (runningLightsCounterx == 255) runningLightsCounterx = 0;
+}
+
+void batteryEmpty() {
+  uint8_t numMiddleLEDs = 3;
+  // Alle LEDs ausschalten
+  fill_solid(leds, numleds, CRGB::Black);
+
+  // Berechnung der mittleren LEDs
+  uint8_t midStart = (numleds / 2) - (numMiddleLEDs / 2); // Index der ersten mittleren LED
+  uint8_t midEnd = midStart + numMiddleLEDs;              // Index der letzten mittleren LED
+
+  // Mittlere LEDs rot leuchten lassen
+  for (uint8_t i = midStart; i < midEnd && i < numleds; i++) {
+    leds[i] = CRGB::Red;
+  }
+}
+
+void gateReady() {
+  uint8_t numMiddleLEDs = 3;
+  // Alle LEDs ausschalten
+  fill_solid(leds, numleds, CRGB::Black);
+
+  // Berechnung der mittleren LEDs
+  uint8_t midStart = (numleds / 2) - (numMiddleLEDs / 2); // Index der ersten mittleren LED
+  uint8_t midEnd = midStart + numMiddleLEDs;              // Index der letzten mittleren LED
+
+  // Mittlere LEDs rot leuchten lassen
+  for (uint8_t i = midStart; i < midEnd && i < numleds; i++) {
+    leds[i] = CRGB::Green;
+  }
+}
+
+// List of patterns to cycle through.  Each is defined as a separate function below.
+typedef void (*SpecialPatternList[])();
+SpecialPatternList specialpatterns = {
+  droneDetected,
+  batteryEmpty,
+  gateReady
+};
+
+// Array mit den Namen der Muster (manuell zugeordnet)
+const char* specialpatternNames[] = {
+  "droneDetected",
+  "batteryEmpty",
+  "gateReady"
+};
+
+uint8_t specialpatternsCount = sizeof(specialpatterns) / sizeof(specialpatterns[0]);

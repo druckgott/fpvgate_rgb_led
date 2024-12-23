@@ -33,7 +33,7 @@ FASTLED_USING_NAMESPACE
 #define LED_PIN 2 //D4
 #define LED_TYPE    WS2812
 #define COLOR_ORDER GRB
-#define NUM_LEDS    160
+#define NUM_LEDS    75 //10mm breite Leds
 
 #define FRAMES_PER_SECOND  120
 
@@ -47,8 +47,9 @@ const uint8_t PIN_LED_STATUS = 13;
 
 #define TRIGPIN 4 //D2
 #define ECHOPIN 5 //D1
-#define DRONEDETECTTIMEOUT 5000
+#define DRONEDETECTTIMEOUT 5 //5 sec
 
+//#define GATESWITCHOFFTIME 30 //30 sec nach letzten Dronendruchflug
 //-------------------------------------------------------
 
 uint8_t brightnesses[] = { 255, 128, 64, 0 };
@@ -66,9 +67,6 @@ float voltageBuffer[NUM_VOLTAGE_VALUES] = {0};  // Array für die letzten 10 Spa
 int voltageBufferIndex = 0;                    // Aktueller Index im Array
 float voltageSum = 0;                          // Laufende Summe der Spannungswerte
 
-unsigned long holdStateTime = 0;  // Variable zum Speichern der Zeit, wann der Zustand gesetzt wurde
-bool droneDetectedStateActive = false;  // Flag, das anzeigt, ob der Zustand aktiv ist
-
 Button buttonBrightness(PIN_BUTTON_BRIGHTNESS);
 Button buttonPattern(PIN_BUTTON_PATTERN);
 Button buttonPalette(PIN_BUTTON_PALETTE);
@@ -81,6 +79,9 @@ enum State {
 };
 
 State currentState = STATE_NORMAL;
+
+unsigned long stateStartTime = 0;
+unsigned long stateDuration = 0; // Dauer des aktuellen Zustands in Millisekunden
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
 
@@ -111,10 +112,14 @@ void nextPattern()
 
 void nextPalette()
 {
-  // add one to the current palette number, and wrap around at the end
-  currentPaletteIndex = (currentPaletteIndex + 1) % paletteCount;
-  Serial.print("*Palette*: ");
-  Serial.println(paletteNames[currentPaletteIndex]);
+  if (strstr(patternNames[currentPatternIndex], "contains_Palette") != NULL) {
+    // add one to the current palette number, and wrap around at the end
+    currentPaletteIndex = (currentPaletteIndex + 1) % paletteCount;
+    Serial.print("*Palette*: ");
+    Serial.println(paletteNames[currentPaletteIndex]);
+  } else {
+    Serial.println("*Palette* wird nicht umgeschalten, da aktuell kein Effekt mit einer aktiven Palette vorhanden ist.");
+  }
 }
 
 float getBatteryVoltage() {
@@ -243,25 +248,38 @@ void handleSleep() {
 }
 
 void handleDroneDetected() {
-  u_int8_t dronedetectedeffect = 14; //runningLights();
+  u_int8_t specialpatternsnumber = 0; //droneDetected();
   // Call the current pattern function once, updating the 'leds' array
-  patterns[dronedetectedeffect]();
+  specialpatterns[specialpatternsnumber]();
   currentPalette = palettes[currentPaletteIndex];
   FastLED.show();
+  FastLED.delay(1000 / FRAMES_PER_SECOND);
+}
+
+void handleGateSwitchOff() {
+  u_int8_t specialpatternsnumber = 2; //gateReady();
+  // Call the current pattern function once, updating the 'leds' array
+  specialpatterns[specialpatternsnumber]();
+  currentPalette = palettes[currentPaletteIndex];
+  FastLED.show();
+  FastLED.delay(1000 / FRAMES_PER_SECOND);
 }
 
 void handleNormalOperation() {
   // Call the current pattern function once, updating the 'leds' array
+    // Call the current pattern function once, updating the 'leds' array
   patterns[currentPatternIndex]();
   currentPalette = palettes[currentPaletteIndex];
   FastLED.show();
   FastLED.delay(1000 / FRAMES_PER_SECOND);
 
+  // Update the hue and blend palettes every 40ms
   EVERY_N_MILLISECONDS(40) {
     hue++;
     nblendPaletteTowardPalette(currentPalette, targetPalette, 8);
   }
 
+  // Increment the fast hue every 4ms
   EVERY_N_MILLISECONDS(4) {
     hueFast++;
   }
@@ -278,11 +296,13 @@ void handleNormalOperation() {
 
 }
 
-State changeState(State newState) {
+State changeState(State newState, unsigned long duration = 0) {
   // Wenn sich der Zustand geändert hat, setze den neuen Zustand und gebe eine Nachricht aus
   if (currentState != newState) {
     currentState = newState;
-    
+    stateStartTime = millis(); // Zeitstempel setzen
+    stateDuration = duration*1000;  // Dauer speichern
+
     // Ausgabe der entsprechenden Nachricht basierend auf dem neuen Zustand
     switch (newState) {
       case STATE_LOW_BATTERY:
@@ -295,6 +315,7 @@ State changeState(State newState) {
         Serial.println("STATE_DRONE_DETECTED");
         break;
       case STATE_NORMAL:
+      default:
         Serial.println("STATE_NORMAL");
         break;
       // Weitere Fälle nach Bedarf hinzufügen
@@ -303,36 +324,23 @@ State changeState(State newState) {
   return newState;
 }
 
-// Funktion zur Handhabung des Drohnenerkennungszustands
-void handleDroneDetectedState() {
-  if (!droneDetectedStateActive) {
-    holdStateTime = millis();  // Zeitstempel setzen
-    droneDetectedStateActive = true;  // Zustand aktiv setzen
-  }
-  // Wenn die Drohne erkannt wurde und der Timeout noch nicht abgelaufen ist
-  if (millis() - holdStateTime < DRONEDETECTTIMEOUT) {
-    changeState(STATE_DRONE_DETECTED);
-  } else {
-    droneDetectedStateActive = false;  // Zustand zurücksetzen
-  }
-}
-
 void updateState() {
-  // Prüfen, ob die Batterie zu niedrig ist
-  if (getBatteryVoltage() <= SWITCH_OFF_VOLTAGE) {
-    changeState(STATE_LOW_BATTERY);
-  } 
-  // Überprüfen, ob eine Drohne erkannt wurde oder der Zustand aktiv ist
-  else if (checkDistanceThreshold(30) || droneDetectedStateActive) {
-    handleDroneDetectedState();
-  } 
-  // Wenn die Helligkeit 0 ist, in den Schlafmodus wechseln
-  else if (brightnesses[currentBrightnessIndex] == 0) {
-    changeState(STATE_SLEEP);
-  } 
-  // Standardzustand (normal)
-  else {
-    changeState(STATE_NORMAL);
+  // Zustandswechsel nur prüfen, wenn keine Zeitbegrenzung aktiv ist
+  if (stateDuration == 0 || millis() - stateStartTime >= stateDuration) {
+    // Prüfen, ob die Batterie zu niedrig ist
+    if (getBatteryVoltage() <= SWITCH_OFF_VOLTAGE) {
+      changeState(STATE_LOW_BATTERY);
+    } 
+    // Überprüfen, ob eine Drohne erkannt wurde
+    else if (checkDistanceThreshold(30)) {
+      changeState(STATE_DRONE_DETECTED, DRONEDETECTTIMEOUT);
+    } 
+    // Wenn die Helligkeit 0 ist, in den Schlafmodus wechseln
+    else if (brightnesses[currentBrightnessIndex] == 0) {
+      changeState(STATE_SLEEP);
+    } else {
+      changeState(STATE_NORMAL);
+    }
   }
 }
 

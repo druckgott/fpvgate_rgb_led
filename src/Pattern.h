@@ -30,11 +30,16 @@ void fireChaseEffect();
 extern uint8_t hue; // rotating "base color" used by many of the patterns
 extern uint8_t hueFast; // faster rotating "base color" used by many of the patterns
 extern uint8_t numleds;
-//extern CRGB leds[];
 extern CRGB* leds;
+
 extern uint8_t patternsCount;
 extern const char* patternNames[];
 typedef void (*SimplePatternList[])();
 extern SimplePatternList patterns ;
+
+extern uint8_t specialpatternsCount;
+extern const char* specialpatternNames[];
+typedef void (*SpecialPatternList[])();
+extern SpecialPatternList specialpatterns ;
 
 #endif
