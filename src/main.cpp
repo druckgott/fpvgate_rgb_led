@@ -49,7 +49,7 @@ const uint8_t PIN_LED_STATUS = 13;
 #define ECHOPIN 5 //D1
 #define DRONEDETECTTIMEOUT 5 //5 sec
 
-//#define GATESWITCHOFFTIME 30 //30 sec nach letzten Dronendruchflug
+#define GATESWITCHOFFTIME 30 //30 sec nach letzten Dronendruchflug
 //-------------------------------------------------------
 
 uint8_t brightnesses[] = { 255, 128, 64, 0 };
@@ -67,6 +67,9 @@ float voltageBuffer[NUM_VOLTAGE_VALUES] = {0};  // Array für die letzten 10 Spa
 int voltageBufferIndex = 0;                    // Aktueller Index im Array
 float voltageSum = 0;                          // Laufende Summe der Spannungswerte
 
+unsigned long gateOnTime = 0;
+uint8_t isUltrasonicSensorHealthy = 0;
+
 Button buttonBrightness(PIN_BUTTON_BRIGHTNESS);
 Button buttonPattern(PIN_BUTTON_PATTERN);
 Button buttonPalette(PIN_BUTTON_PALETTE);
@@ -75,7 +78,8 @@ enum State {
   STATE_NORMAL,
   STATE_LOW_BATTERY,
   STATE_DRONE_DETECTED,
-  STATE_SLEEP
+  STATE_SLEEP,
+  STATE_READY
 };
 
 State currentState = STATE_NORMAL;
@@ -145,6 +149,12 @@ float getBatteryVoltage() {
 }
 
 bool checkDistanceThreshold(float threshold) {
+
+  //wenn der Sensor defekt ist nach 20 abfragen abbrechen
+  if(isUltrasonicSensorHealthy >= 10) {
+    return false; // False if the distance is greater than the threshold
+  }
+
   // Define sound velocity in cm/us and conversion factor for cm to inches
   float SOUND_VELOCITY = 0.034;
   long duration;
@@ -168,9 +178,16 @@ bool checkDistanceThreshold(float threshold) {
   if (distanceCm <= threshold && distanceCm > 0 ) {
     //Serial.print("Distance (cm): ");
     //Serial.println(distanceCm);
+    gateOnTime = millis();
+    isUltrasonicSensorHealthy = 0;
     return true;  // True if the distance is less than or equal to the threshold
   } else if (distanceCm == 0) {
-    Serial.println("HC-SR04 not working");
+    Serial.print("HC-SR04 not working (isUltrasonicSensorHealthy > 10 switch off): ");
+    Serial.println(isUltrasonicSensorHealthy);
+    isUltrasonicSensorHealthy++;
+    if(isUltrasonicSensorHealthy >= 10) {
+      Serial.println("HC-SR04 deaktiviert");
+    }
     return false; // False if the distance is greater than the threshold
   } else {
     return false; // False if the distance is greater than the threshold
@@ -256,7 +273,7 @@ void handleDroneDetected() {
   FastLED.delay(1000 / FRAMES_PER_SECOND);
 }
 
-void handleGateSwitchOff() {
+void handleGateReady() {
   u_int8_t specialpatternsnumber = 2; //gateReady();
   // Call the current pattern function once, updating the 'leds' array
   specialpatterns[specialpatternsnumber]();
@@ -311,6 +328,9 @@ State changeState(State newState, unsigned long duration = 0) {
       case STATE_SLEEP:
         Serial.println("STATE_SLEEP");
         break;
+      case STATE_READY:
+        Serial.println("STATE_READY");
+        break;
       case STATE_DRONE_DETECTED:
         Serial.println("STATE_DRONE_DETECTED");
         break;
@@ -330,14 +350,12 @@ void updateState() {
     // Prüfen, ob die Batterie zu niedrig ist
     if (getBatteryVoltage() <= SWITCH_OFF_VOLTAGE) {
       changeState(STATE_LOW_BATTERY);
-    } 
-    // Überprüfen, ob eine Drohne erkannt wurde
-    else if (checkDistanceThreshold(30)) {
-      changeState(STATE_DRONE_DETECTED, DRONEDETECTTIMEOUT);
-    } 
-    // Wenn die Helligkeit 0 ist, in den Schlafmodus wechseln
-    else if (brightnesses[currentBrightnessIndex] == 0) {
+    } else if (brightnesses[currentBrightnessIndex] == 0) {  // Wenn die Helligkeit 0 ist, in den Schlafmodus wechseln
       changeState(STATE_SLEEP);
+    } else if (checkDistanceThreshold(30)  && isUltrasonicSensorHealthy < 10) { // Überprüfen, ob eine Drohne erkannt wurde und sicherstellen, dass der sensor nicht defekt ist
+      changeState(STATE_DRONE_DETECTED, DRONEDETECTTIMEOUT);
+    } else if (millis() - gateOnTime >= GATESWITCHOFFTIME*1000 && isUltrasonicSensorHealthy < 10) { //wenn eine drone gefunden wurde dann auch noch prüfen das das Gate dann irgendwann ausgeht und sicherstellen, dass der sensor nicht defekt ist
+      changeState(STATE_READY);
     } else {
       changeState(STATE_NORMAL);
     }
@@ -382,6 +400,9 @@ void loop()
       break;
     case STATE_SLEEP:
       handleSleep();
+      break;
+    case STATE_READY:
+      handleGateReady();
       break;
     case STATE_DRONE_DETECTED:
       handleDroneDetected();
