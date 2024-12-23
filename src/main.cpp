@@ -19,10 +19,9 @@ FASTLED_USING_NAMESPACE
 #warning "Requires FastLED 3.1 or later; check github for latest code."
 #endif
 
-#define DATA_PIN 2 //D4
 #define PIN_BUTTON_PATTERN 0 // GPIO0 auf NodeMCU ist D3 (PIN 0) --> Flash Button fuer BRIDHTNESS verwenden
 #define PIN_BUTTON_PALETTE 99
-#define PIN_BUTTON_BRIGHTNESS 5 //D1
+#define PIN_BUTTON_BRIGHTNESS 15 //D8
 
 #define BAT_VOLTAGE_PIN A0
 #define VOLTAGE_FACTOR 5  //Resistors Ration Factor
@@ -31,6 +30,7 @@ FASTLED_USING_NAMESPACE
 
 //#define CLK_PIN     2
 //#define LED_TYPE    APA102
+#define LED_PIN 2 //D4
 #define LED_TYPE    WS2812
 #define COLOR_ORDER GRB
 #define NUM_LEDS    160
@@ -44,6 +44,12 @@ uint8_t cyclePalette = 1;
 uint16_t paletteDuration = 7; //sec
 
 const uint8_t PIN_LED_STATUS = 13;
+
+#define TRIGPIN 4 //D2
+#define ECHOPIN 5 //D1
+#define DRONEDETECTTIMEOUT 5000
+
+//-------------------------------------------------------
 
 uint8_t brightnesses[] = { 255, 128, 64, 0 };
 uint8_t currentBrightnessIndex = 0;
@@ -60,6 +66,9 @@ float voltageBuffer[NUM_VOLTAGE_VALUES] = {0};  // Array für die letzten 10 Spa
 int voltageBufferIndex = 0;                    // Aktueller Index im Array
 float voltageSum = 0;                          // Laufende Summe der Spannungswerte
 
+unsigned long holdStateTime = 0;  // Variable zum Speichern der Zeit, wann der Zustand gesetzt wurde
+bool droneDetectedStateActive = false;  // Flag, das anzeigt, ob der Zustand aktiv ist
+
 Button buttonBrightness(PIN_BUTTON_BRIGHTNESS);
 Button buttonPattern(PIN_BUTTON_PATTERN);
 Button buttonPalette(PIN_BUTTON_PALETTE);
@@ -67,6 +76,7 @@ Button buttonPalette(PIN_BUTTON_PALETTE);
 enum State {
   STATE_NORMAL,
   STATE_LOW_BATTERY,
+  STATE_DRONE_DETECTED,
   STATE_SLEEP
 };
 
@@ -127,6 +137,39 @@ float getBatteryVoltage() {
     //Serial.print("batteryVoltage: ");
     //Serial.println(batteryVoltage);
     return batteryVoltage;
+}
+
+bool checkDistanceThreshold(float threshold) {
+  // Define sound velocity in cm/us and conversion factor for cm to inches
+  float SOUND_VELOCITY = 0.034;
+  long duration;
+  float distanceCm;
+
+  // Clears the trigPin
+  digitalWrite(TRIGPIN, LOW);
+  delayMicroseconds(2);
+
+  // Sets the trigPin on HIGH state for 10 micro seconds
+  digitalWrite(TRIGPIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIGPIN, LOW);
+
+  // Reads the echoPin, returns the sound wave travel time in microseconds
+  duration = pulseIn(ECHOPIN, HIGH);
+  // Calculate the distance in cm
+  distanceCm = duration * SOUND_VELOCITY / 2;
+
+  // Check if the distance is greater than the threshold
+  if (distanceCm <= threshold && distanceCm > 0 ) {
+    //Serial.print("Distance (cm): ");
+    //Serial.println(distanceCm);
+    return true;  // True if the distance is less than or equal to the threshold
+  } else if (distanceCm == 0) {
+    Serial.println("HC-SR04 not working");
+    return false; // False if the distance is greater than the threshold
+  } else {
+    return false; // False if the distance is greater than the threshold
+  }
 }
 
 void handleInput() {
@@ -199,6 +242,14 @@ void handleSleep() {
   nextBrightness();
 }
 
+void handleDroneDetected() {
+  u_int8_t dronedetectedeffect = 14; //runningLights();
+  // Call the current pattern function once, updating the 'leds' array
+  patterns[dronedetectedeffect]();
+  currentPalette = palettes[currentPaletteIndex];
+  FastLED.show();
+}
+
 void handleNormalOperation() {
   // Call the current pattern function once, updating the 'leds' array
   patterns[currentPatternIndex]();
@@ -228,9 +279,11 @@ void handleNormalOperation() {
 }
 
 State changeState(State newState) {
-  // Wenn sich der Zustand ändert, gebe eine Nachricht aus
-  if (newState != currentState) {
+  // Wenn sich der Zustand geändert hat, setze den neuen Zustand und gebe eine Nachricht aus
+  if (currentState != newState) {
     currentState = newState;
+    
+    // Ausgabe der entsprechenden Nachricht basierend auf dem neuen Zustand
     switch (newState) {
       case STATE_LOW_BATTERY:
         Serial.println("STATE_LOW_BATTERY");
@@ -238,22 +291,48 @@ State changeState(State newState) {
       case STATE_SLEEP:
         Serial.println("STATE_SLEEP");
         break;
+      case STATE_DRONE_DETECTED:
+        Serial.println("STATE_DRONE_DETECTED");
+        break;
       case STATE_NORMAL:
         Serial.println("STATE_NORMAL");
         break;
-      // Füge hier nach Bedarf weitere Fälle hinzu
+      // Weitere Fälle nach Bedarf hinzufügen
     }
   }
   return newState;
 }
 
-void updateState() {
-  if (getBatteryVoltage() <= SWITCH_OFF_VOLTAGE) {
-    currentState = changeState(STATE_LOW_BATTERY);
-  } else if (brightnesses[currentBrightnessIndex] == 0) {
-    currentState = changeState(STATE_SLEEP);
+// Funktion zur Handhabung des Drohnenerkennungszustands
+void handleDroneDetectedState() {
+  if (!droneDetectedStateActive) {
+    holdStateTime = millis();  // Zeitstempel setzen
+    droneDetectedStateActive = true;  // Zustand aktiv setzen
+  }
+  // Wenn die Drohne erkannt wurde und der Timeout noch nicht abgelaufen ist
+  if (millis() - holdStateTime < DRONEDETECTTIMEOUT) {
+    changeState(STATE_DRONE_DETECTED);
   } else {
-    currentState = changeState(STATE_NORMAL);
+    droneDetectedStateActive = false;  // Zustand zurücksetzen
+  }
+}
+
+void updateState() {
+  // Prüfen, ob die Batterie zu niedrig ist
+  if (getBatteryVoltage() <= SWITCH_OFF_VOLTAGE) {
+    changeState(STATE_LOW_BATTERY);
+  } 
+  // Überprüfen, ob eine Drohne erkannt wurde oder der Zustand aktiv ist
+  else if (checkDistanceThreshold(30) || droneDetectedStateActive) {
+    handleDroneDetectedState();
+  } 
+  // Wenn die Helligkeit 0 ist, in den Schlafmodus wechseln
+  else if (brightnesses[currentBrightnessIndex] == 0) {
+    changeState(STATE_SLEEP);
+  } 
+  // Standardzustand (normal)
+  else {
+    changeState(STATE_NORMAL);
   }
 }
 
@@ -263,11 +342,14 @@ void setup() {
   
   delay(3000); // 3 second delay for recovery
 
+  pinMode(TRIGPIN, OUTPUT); // Sets the trigPin as an Output
+  pinMode(ECHOPIN, INPUT); // Sets the echoPin as an Input
+
   setNumLeds(NUM_LEDS);
   FastLED.setMaxPowerInVoltsAndMilliamps(5, 500);
 
   // tell FastLED about the LED strip configuration
-  FastLED.addLeds<LED_TYPE, DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
 
   // set master brightness control
   FastLED.setBrightness(brightnesses[currentBrightnessIndex]);
@@ -290,11 +372,12 @@ void loop()
     case STATE_LOW_BATTERY:
       handleLowBattery();
       break;
-
     case STATE_SLEEP:
       handleSleep();
       break;
-
+    case STATE_DRONE_DETECTED:
+      handleDroneDetected();
+      break;
     case STATE_NORMAL:
     default:
       handleNormalOperation();
