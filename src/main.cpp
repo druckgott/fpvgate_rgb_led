@@ -19,15 +19,18 @@ FASTLED_USING_NAMESPACE
 #warning "Requires FastLED 3.1 or later; check github for latest code."
 #endif
 
+//Pins fuer Buttons
 #define PIN_BUTTON_PATTERN 0 // GPIO0 auf NodeMCU ist D3 (PIN 0) --> Flash Button fuer BRIDHTNESS verwenden
 #define PIN_BUTTON_PALETTE 99
 #define PIN_BUTTON_BRIGHTNESS 15 //D8
 
+//Batterie limit --> es wird ein spezieller Effekt gewahlt der anzeigt das die Batterie leer ist (5 rote leds in der Mitte des Rings)
 #define BAT_VOLTAGE_PIN A0
 #define VOLTAGE_FACTOR 5  //Resistors Ration Factor
 #define NUM_VOLTAGE_VALUES 10  // Anzahl der gespeicherten Spannungswerte
 #define SWITCH_OFF_VOLTAGE 0.000001 //ganz klein sonst leuchtet der Ring rot, wenn alles nur uber usb laeuft
 
+//LED Config
 //#define CLK_PIN     2
 //#define LED_TYPE    APA102
 #define LED_PIN 2 //D4
@@ -35,21 +38,27 @@ FASTLED_USING_NAMESPACE
 #define COLOR_ORDER GRB
 #define NUM_LEDS    75 //10mm breite Leds
 
+//Updaterate der LEDS
 #define FRAMES_PER_SECOND  120
 
-uint8_t cyclePattern = 1;
-uint16_t cyclePatternDuration = 20; //sec
 //Effekte automatisch durchschallten (cyclePalettes) bei 1, Zeitdauer festlegen (paletteDuration)
-uint8_t cyclePalette = 1;
+bool cyclePattern = true;
+uint16_t cyclePatternDuration = 20; //sec
+//Farbpalleten durchschalten (nur bei effekten mit dem Namen: contains_Palette)
+bool cyclePalette = true;
 uint16_t paletteDuration = 7; //sec
 
+//PIN des ESP´s
 const uint8_t PIN_LED_STATUS = 13;
 
+//Trigger Pin fuer HC-SR04
 #define TRIGPIN 4 //D2
 #define ECHOPIN 5 //D1
+//wenn eine Drone erkannt wird einene effect durchfuhren, dieser wird dann nach der aufgefuhrten Zeit wieder deaktiviert
 #define DRONEDETECTTIMEOUT 5 //5 sec
 
-#define GATESWITCHOFFTIME 30 //30 sec nach letzten Dronendruchflug
+#define GATESWITCHOFFTIME 300 //300 sec nach letzten Dronendruchflug
+
 //-------------------------------------------------------
 
 uint8_t brightnesses[] = { 255, 128, 64, 0 };
@@ -201,7 +210,7 @@ void handleInput() {
   else if (buttonPattern.released())
   {
     //autoplay cyclePattern deaktivieren
-    cyclePattern = 0;
+    cyclePattern = false;
     ledStatus = !ledStatus;
     digitalWrite(PIN_LED_STATUS, LOW);
     nextPattern();
@@ -213,7 +222,7 @@ void handleInput() {
   else if (buttonPalette.released())
   {
     //autoplay cyclePalette deaktivieren
-    cyclePalette = 0;
+    cyclePalette = false;
     ledStatus = !ledStatus;
     digitalWrite(PIN_LED_STATUS, LOW);
     nextPalette();
@@ -238,7 +247,6 @@ void handleLowBattery() {
 void handleSleep() {
   Serial.println("Going down...");
   Serial.flush();
-
   fill_solid(leds, NUM_LEDS, CRGB::Black);
   FastLED.show();
 
@@ -301,12 +309,12 @@ void handleNormalOperation() {
     hueFast++;
   }
 
-  if (cyclePattern == 1 && (millis() > cyclePatternTimeout)) {
+  if (cyclePattern && (millis() > cyclePatternTimeout)) {
     nextPattern();
     cyclePatternTimeout = millis() + (cyclePatternDuration * 1000);
   }
 
-  if (cyclePalette == 1 && (millis() > paletteTimeout)) {
+  if (cyclePalette && (millis() > paletteTimeout)) {
     nextPalette();
     paletteTimeout = millis() + (paletteDuration * 1000);
   }
