@@ -210,7 +210,7 @@ void checkDistanceThreshold() {
 
   //wenn der Sensor defekt ist nach 20 abfragen abbrechen
   if(isUltrasonicSensorHealthy >= 10) {
-    distanceCm = -1; // False if the distance is greater than the threshold
+    distanceCm = -1; 
   }
 
   // Define sound velocity in cm/us and conversion factor for cm to inches
@@ -230,20 +230,20 @@ void checkDistanceThreshold() {
   // Calculate the distance in cm
   distanceCm = (duration/2) / 29.1;
 
-  // Check if the distance is greater than the threshold
-  if (distanceCm > 0 ) {
-    gateOnTime = millis();
+  Serial.print("distanceCm: ");
+  Serial.println(distanceCm);
+
+  if (distanceCm > 0){
     isUltrasonicSensorHealthy = 0;
+  }
+  // Check if the distance is greater than the threshold
+  if (distanceCm > 0 && distanceCm <= DISTANCETHRESHOLD) {
+    gateOnTime = millis();
   } else if (distanceCm == 0) {
-    Serial.print("HC-SR04 not working (isUltrasonicSensorHealthy > 10 switch off): ");
-    Serial.println(isUltrasonicSensorHealthy);
     isUltrasonicSensorHealthy++;
-    if(isUltrasonicSensorHealthy >= 10) {
+    if(isUltrasonicSensorHealthy == 10) {
       Serial.println("HC-SR04 deaktiviert");
     }
-    distanceCm = -1; // False if the distance is greater than the threshold
-  } else {
-    distanceCm = -1; // False if the distance is greater than the threshold
   }
 }
 
@@ -416,7 +416,7 @@ void updateState() {
       changeState(STATE_LOW_BATTERY);
     } else if (brightnesses[currentBrightnessIndex] == 0) {  // Wenn die Helligkeit 0 ist, in den Schlafmodus wechseln
       changeState(STATE_SLEEP);
-    } else if (distanceCm <= DISTANCETHRESHOLD && isUltrasonicSensorHealthy < 10) { // Überprüfen, ob eine Drohne erkannt wurde und sicherstellen, dass der sensor nicht defekt ist
+    } else if (distanceCm <= DISTANCETHRESHOLD && distanceCm > 1) { // Überprüfen, ob eine Drohne erkannt wurde und sicherstellen, dass der sensor nicht defekt ist
       changeState(STATE_DRONE_DETECTED, DRONEDETECTTIMEOUT);
     } else if (millis() - gateOnTime >= GATESWITCHOFFTIME*1000 && isUltrasonicSensorHealthy < 10) { //wenn eine drone gefunden wurde dann auch noch prüfen das das Gate dann irgendwann ausgeht und sicherstellen, dass der sensor nicht defekt ist
       changeState(STATE_READY);
