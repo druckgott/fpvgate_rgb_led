@@ -441,19 +441,36 @@ void gateReady() {
   }
 }
 
+void game1() {
+  uint8_t numMiddleLEDs = 10;
+  // Alle LEDs ausschalten
+  fill_solid(leds, numleds, CRGB::Black);
+
+  // Berechnung der mittleren LEDs
+  uint8_t midStart = (numleds / 2) - (numMiddleLEDs / 2); // Index der ersten mittleren LED
+  uint8_t midEnd = midStart + numMiddleLEDs;              // Index der letzten mittleren LED
+
+  // Mittlere LEDs rot leuchten lassen
+  for (uint8_t i = midStart; i < midEnd && i < numleds; i++) {
+    leds[i] = CRGB::Blue;
+  }
+}
+
 // List of patterns to cycle through.  Each is defined as a separate function below.
 typedef void (*SpecialPatternList[])();
 SpecialPatternList specialpatterns = {
   droneDetected,
   batteryEmpty,
-  gateReady
+  gateReady,
+  game1
 };
 
 // Array mit den Namen der Muster (manuell zugeordnet)
 const char* specialpatternNames[] = {
   "droneDetected",
   "batteryEmpty",
-  "gateReady"
+  "gateReady",
+  "Game1"
 };
 
 uint8_t specialpatternsCount = sizeof(specialpatterns) / sizeof(specialpatterns[0]);

@@ -1,6 +1,15 @@
 #include <FastLED.h>  // https://github.com/FastLED/FastLED
 #include <Button.h>   // https://github.com/madleech/Button
 
+/*#ifdef ESP32
+#include <WiFi.h>
+#include <esp_wifi.h>
+#include <esp_now.h>
+#else
+#include <ESP8266WiFi.h>
+#include <espnow.h>
+#endif*/
+
 #include "Palettes.h"
 #include "Pattern.h"
 
@@ -57,10 +66,21 @@ const uint8_t PIN_LED_STATUS = 13;
 //wenn eine Drone erkannt wird einene effect durchfuhren, dieser wird dann nach der aufgefuhrten Zeit wieder deaktiviert
 #define DRONEDETECTTIMEOUT 5 //5 sec
 
+#define DISTANCETHRESHOLD 20
 #define GATESWITCHOFFTIME 300 //300 sec nach letzten Dronendruchflug
 
 //-------------------------------------------------------
 
+// Structure example to send data
+// Must match the receiver structure
+/*typedef struct struct_message {
+  uint8_t gateNumber;   // Gatenummer zwischen 1-100
+  char statusName[4];   // STATUSNAME mit 3 Buchstaben (+1 für Nullterminierung)
+} struct_message;
+
+struct_message recData;   //data received*/
+
+//bei dem Wert 0 wird der ESP in den Deepsleep ueberfuert
 uint8_t brightnesses[] = { 255, 128, 64, 0 };
 uint8_t currentBrightnessIndex = 0;
 
@@ -78,6 +98,7 @@ float voltageSum = 0;                          // Laufende Summe der Spannungswe
 
 unsigned long gateOnTime = 0;
 uint8_t isUltrasonicSensorHealthy = 0;
+float distanceCm = -1;
 
 Button buttonBrightness(PIN_BUTTON_BRIGHTNESS);
 Button buttonPattern(PIN_BUTTON_PATTERN);
@@ -88,7 +109,8 @@ enum State {
   STATE_LOW_BATTERY,
   STATE_DRONE_DETECTED,
   STATE_SLEEP,
-  STATE_READY
+  STATE_READY/*,
+  STATE_GAME1*/
 };
 
 State currentState = STATE_NORMAL;
@@ -96,7 +118,34 @@ State currentState = STATE_NORMAL;
 unsigned long stateStartTime = 0;
 unsigned long stateDuration = 0; // Dauer des aktuellen Zustands in Millisekunden
 
+/*uint8_t gameMode = 0;*/
+
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
+
+/*
+// callback function that will be executed when data is received
+#ifdef ESP32
+void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
+#else
+void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
+#endif
+  memcpy(&recData, incomingData, sizeof(recData));
+  // Debug-Ausgabe: Anzahl der empfangenen Bytes
+  Serial.print("Bytes empfangen: ");
+  Serial.println(len);
+  // Empfange und zeige die Gatenummer an
+  Serial.print("Gatenummer: ");
+  Serial.println(recData.gateNumber);
+  // Empfange und zeige den Statusnamen an
+  Serial.print("STATUSNAME: ");
+  Serial.println(recData.statusName);
+  if (strcmp(recData.statusName, "GA1") == 0) {
+    gameMode = 1;
+  }
+  if (strcmp(recData.statusName, "GA0") == 0) {
+    gameMode = 0;
+  }
+}*/
 
 // ISR-Funktion im IRAM speichern
 void IRAM_ATTR wakeUp() {
@@ -157,17 +206,15 @@ float getBatteryVoltage() {
     return batteryVoltage;
 }
 
-bool checkDistanceThreshold(float threshold) {
+void checkDistanceThreshold() {
 
   //wenn der Sensor defekt ist nach 20 abfragen abbrechen
   if(isUltrasonicSensorHealthy >= 10) {
-    return false; // False if the distance is greater than the threshold
+    distanceCm = -1; // False if the distance is greater than the threshold
   }
 
   // Define sound velocity in cm/us and conversion factor for cm to inches
-  float SOUND_VELOCITY = 0.034;
   long duration;
-  float distanceCm;
 
   // Clears the trigPin
   digitalWrite(TRIGPIN, LOW);
@@ -179,17 +226,14 @@ bool checkDistanceThreshold(float threshold) {
   digitalWrite(TRIGPIN, LOW);
 
   // Reads the echoPin, returns the sound wave travel time in microseconds
-  duration = pulseIn(ECHOPIN, HIGH);
+  duration = pulseIn(ECHOPIN, HIGH, 20000);
   // Calculate the distance in cm
-  distanceCm = duration * SOUND_VELOCITY / 2;
+  distanceCm = (duration/2) / 29.1;
 
   // Check if the distance is greater than the threshold
-  if (distanceCm <= threshold && distanceCm > 0 ) {
-    //Serial.print("Distance (cm): ");
-    //Serial.println(distanceCm);
+  if (distanceCm > 0 ) {
     gateOnTime = millis();
     isUltrasonicSensorHealthy = 0;
-    return true;  // True if the distance is less than or equal to the threshold
   } else if (distanceCm == 0) {
     Serial.print("HC-SR04 not working (isUltrasonicSensorHealthy > 10 switch off): ");
     Serial.println(isUltrasonicSensorHealthy);
@@ -197,9 +241,9 @@ bool checkDistanceThreshold(float threshold) {
     if(isUltrasonicSensorHealthy >= 10) {
       Serial.println("HC-SR04 deaktiviert");
     }
-    return false; // False if the distance is greater than the threshold
+    distanceCm = -1; // False if the distance is greater than the threshold
   } else {
-    return false; // False if the distance is greater than the threshold
+    distanceCm = -1; // False if the distance is greater than the threshold
   }
 }
 
@@ -290,6 +334,15 @@ void handleGateReady() {
   FastLED.delay(1000 / FRAMES_PER_SECOND);
 }
 
+/*void handleGame1() {
+  u_int8_t specialpatternsnumber = 3; //gateReady();
+  // Call the current pattern function once, updating the 'leds' array
+  specialpatterns[specialpatternsnumber]();
+  currentPalette = palettes[currentPaletteIndex];
+  FastLED.show();
+  FastLED.delay(1000 / FRAMES_PER_SECOND);
+}*/
+
 void handleNormalOperation() {
   // Call the current pattern function once, updating the 'leds' array
     // Call the current pattern function once, updating the 'leds' array
@@ -342,6 +395,9 @@ State changeState(State newState, unsigned long duration = 0) {
       case STATE_DRONE_DETECTED:
         Serial.println("STATE_DRONE_DETECTED");
         break;
+      /*case STATE_GAME1:
+        Serial.println("STATE_GAME1");
+        break;*/
       case STATE_NORMAL:
       default:
         Serial.println("STATE_NORMAL");
@@ -360,10 +416,12 @@ void updateState() {
       changeState(STATE_LOW_BATTERY);
     } else if (brightnesses[currentBrightnessIndex] == 0) {  // Wenn die Helligkeit 0 ist, in den Schlafmodus wechseln
       changeState(STATE_SLEEP);
-    } else if (checkDistanceThreshold(30)  && isUltrasonicSensorHealthy < 10) { // Überprüfen, ob eine Drohne erkannt wurde und sicherstellen, dass der sensor nicht defekt ist
+    } else if (distanceCm <= DISTANCETHRESHOLD && isUltrasonicSensorHealthy < 10) { // Überprüfen, ob eine Drohne erkannt wurde und sicherstellen, dass der sensor nicht defekt ist
       changeState(STATE_DRONE_DETECTED, DRONEDETECTTIMEOUT);
     } else if (millis() - gateOnTime >= GATESWITCHOFFTIME*1000 && isUltrasonicSensorHealthy < 10) { //wenn eine drone gefunden wurde dann auch noch prüfen das das Gate dann irgendwann ausgeht und sicherstellen, dass der sensor nicht defekt ist
       changeState(STATE_READY);
+    /*} else if (gameMode == 1) {
+      changeState(STATE_GAME1);*/
     } else {
       changeState(STATE_NORMAL);
     }
@@ -375,6 +433,28 @@ void setup() {
   Serial.println("setup");
   
   delay(3000); // 3 second delay for recovery
+
+  /*WiFi.mode(WIFI_STA);
+
+  // Init ESP-NOW
+  #ifdef ESP32
+  if (esp_now_init() != ESP_OK) {
+  #else
+  if (esp_now_init() != 0) {
+  #endif
+   Serial.println("Error initializing ESP-NOW");
+    return;
+  }
+
+  #ifdef ESP32
+  esp_now_register_recv_cb(OnDataRecv);
+  #else
+  esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
+  // Register a callback function to handle received ESP-NOW data
+  //esp_now_register_recv_cb(esp_now_recv_cb_t(OnDataRecv));
+  esp_now_register_recv_cb(OnDataRecv);
+  #endif*/
+
 
   pinMode(TRIGPIN, OUTPUT); // Sets the trigPin as an Output
   pinMode(ECHOPIN, INPUT); // Sets the echoPin as an Input
@@ -400,6 +480,7 @@ void setup() {
 
 void loop()
 {
+  checkDistanceThreshold();
   updateState();
 
   switch (currentState) {
@@ -415,6 +496,9 @@ void loop()
     case STATE_DRONE_DETECTED:
       handleDroneDetected();
       break;
+    /*case STATE_GAME1:
+      handleGame1();
+      break;*/
     case STATE_NORMAL:
     default:
       handleNormalOperation();
