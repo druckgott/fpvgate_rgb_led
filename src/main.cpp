@@ -45,7 +45,8 @@ FASTLED_USING_NAMESPACE
 #define LED_PIN 2 //D4
 #define LED_TYPE    WS2812
 #define COLOR_ORDER GRB
-#define NUM_LEDS    75 //10mm breite Leds
+//#define NUM_LEDS    75 //10mm breite Leds
+#define NUM_LEDS    160 //10mm breite Leds
 
 //Updaterate der LEDS
 #define FRAMES_PER_SECOND  120
@@ -460,7 +461,7 @@ void setup() {
   pinMode(ECHOPIN, INPUT); // Sets the echoPin as an Input
 
   setNumLeds(NUM_LEDS);
-  FastLED.setMaxPowerInVoltsAndMilliamps(5, 6000);
+  FastLED.setMaxPowerInVoltsAndMilliamps(5, 500);
 
   // tell FastLED about the LED strip configuration
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
