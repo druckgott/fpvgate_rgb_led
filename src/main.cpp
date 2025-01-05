@@ -52,10 +52,10 @@ FASTLED_USING_NAMESPACE
 
 //Effekte automatisch durchschallten (cyclePalettes) bei 1, Zeitdauer festlegen (paletteDuration)
 bool cyclePattern = true;
-uint16_t cyclePatternDuration = 20; //sec
+uint16_t cyclePatternDuration = 60; //sec
 //Farbpalleten durchschalten (nur bei effekten mit dem Namen: contains_Palette)
 bool cyclePalette = true;
-uint16_t paletteDuration = 7; //sec
+uint16_t paletteDuration = 18; //sec
 
 //PIN des ESP´s
 const uint8_t PIN_LED_STATUS = 13;
@@ -460,7 +460,7 @@ void setup() {
   pinMode(ECHOPIN, INPUT); // Sets the echoPin as an Input
 
   setNumLeds(NUM_LEDS);
-  FastLED.setMaxPowerInVoltsAndMilliamps(5, 500);
+  FastLED.setMaxPowerInVoltsAndMilliamps(5, 6000);
 
   // tell FastLED about the LED strip configuration
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
