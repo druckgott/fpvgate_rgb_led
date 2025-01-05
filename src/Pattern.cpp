@@ -397,6 +397,33 @@ uint8_t patternsCount = sizeof(patterns) / sizeof(patterns[0]);
 uint8_t runningLightsCounterx = 0;  // Schrittzähler für Running Lights
 
 void droneDetected() {
+    uint8_t numBeams = 4;        // Anzahl der Strahlen
+    uint8_t beamWidth = 4;       // Breite jedes Strahls (in LEDs)
+    uint8_t rotationSpeed = 1;   // Geschwindigkeit der Rotation
+    uint8_t angleOffset = 360 / numBeams; // Abstand zwischen den Strahlen (120° für 3 Strahlen)
+
+    // Neon-Style-Farben
+    CRGB colors[] = {CRGB::Cyan, CRGB::Magenta, CRGB::Lime};
+
+    // LEDs löschen, damit alte Effekte verschwinden
+    fill_solid(leds, numleds, CRGB::Black);
+
+    // Berechne Position und zeichne Strahlen
+    for (uint8_t beam = 0; beam < numBeams; beam++) {
+        int startPos = (runningLightsCounterx + beam * angleOffset) % numleds;
+
+        for (int i = 0; i < beamWidth; i++) {
+            int ledIndex = (startPos + i) % numleds; // Stelle sicher, dass Index gültig ist
+            leds[ledIndex] = colors[beam % numBeams]; // Wähle passende Neonfarbe
+        }
+    }
+
+    // Animation weiterdrehen
+    runningLightsCounterx += rotationSpeed;
+    if (runningLightsCounterx >= numleds) runningLightsCounterx = 0;
+}
+
+/*void droneDetected() {
     uint8_t size = 2;  // Adjust for smoothness
     uint8_t sineIncr = (255 / numleds) * size;
     sineIncr = sineIncr > 1 ? sineIncr : 1;
@@ -409,10 +436,10 @@ void droneDetected() {
 
     runningLightsCounterx++;
     if (runningLightsCounterx == 255) runningLightsCounterx = 0;
-}
+}*/
 
 void batteryEmpty() {
-  uint8_t numMiddleLEDs = 3;
+  uint8_t numMiddleLEDs = 4;
   // Alle LEDs ausschalten
   fill_solid(leds, numleds, CRGB::Black);
 
@@ -426,8 +453,23 @@ void batteryEmpty() {
   }
 }
 
+void batteryLow() {
+  uint8_t numMiddleLEDs = 4;
+  // Alle LEDs ausschalten
+  fill_solid(leds, numleds, CRGB::Black);
+
+  // Berechnung der mittleren LEDs
+  uint8_t midStart = (numleds / 2) - (numMiddleLEDs / 2); // Index der ersten mittleren LED
+  uint8_t midEnd = midStart + numMiddleLEDs;              // Index der letzten mittleren LED
+
+  // Mittlere LEDs rot leuchten lassen
+  for (uint8_t i = midStart; i < midEnd && i < numleds; i++) {
+    leds[i] = CRGB::Orange;
+  }
+}
+
 void gateReady() {
-  uint8_t numMiddleLEDs = 3;
+  uint8_t numMiddleLEDs = 4;
   // Alle LEDs ausschalten
   fill_solid(leds, numleds, CRGB::Black);
 
@@ -462,7 +504,8 @@ SpecialPatternList specialpatterns = {
   droneDetected,
   batteryEmpty,
   gateReady,
-  game1
+  game1,
+  batteryLow
 };
 
 // Array mit den Namen der Muster (manuell zugeordnet)
@@ -470,7 +513,8 @@ const char* specialpatternNames[] = {
   "droneDetected",
   "batteryEmpty",
   "gateReady",
-  "Game1"
+  "Game1",
+  "batteryLow"
 };
 
 uint8_t specialpatternsCount = sizeof(specialpatterns) / sizeof(specialpatterns[0]);

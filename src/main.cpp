@@ -29,20 +29,20 @@ FASTLED_USING_NAMESPACE
 #endif
 
 //Pins fuer Buttons
-#define PIN_BUTTON_PATTERN 0 // GPIO0 auf NodeMCU ist D3 (PIN 0) --> Flash Button fuer BRIDHTNESS verwenden
+#define PIN_BUTTON_PATTERN 18 // D18 GPIO18
 #define PIN_BUTTON_PALETTE 99
-#define PIN_BUTTON_BRIGHTNESS 15 //D8
+#define PIN_BUTTON_BRIGHTNESS 19 //D19 GIOP19
 
 //Batterie limit --> es wird ein spezieller Effekt gewahlt der anzeigt das die Batterie leer ist (5 rote leds in der Mitte des Rings)
-#define BAT_VOLTAGE_PIN A0
-#define VOLTAGE_FACTOR 5  //Resistors Ration Factor
-#define NUM_VOLTAGE_VALUES 10  // Anzahl der gespeicherten Spannungswerte
-#define SWITCH_OFF_VOLTAGE 0.000001 //ganz klein sonst leuchtet der Ring rot, wenn alles nur uber usb laeuft
+#define BAT_VOLTAGE_PIN 35 //D35 for ANALOG GIPO35
+#define VOLTAGE_FACTOR 4.06  //Resistors Ration Factor
+#define SWITCH_OFF_VOLTAGE 11.3 //11V fuer 3S
+#define BATTERYCHECKINVERTVAL 1000 //so lange wird der status Batterie Low mindestens gehalten
 
 //LED Config
 //#define CLK_PIN     2
 //#define LED_TYPE    APA102
-#define LED_PIN 2 //D4
+#define LED_PIN 4 //D4 GIPO4
 #define LED_TYPE    WS2812
 #define COLOR_ORDER GRB
 #define NUM_LEDS    75 //10mm breite Leds
@@ -58,15 +58,15 @@ bool cyclePalette = true;
 uint16_t paletteDuration = 7; //sec
 
 //PIN des ESP´s
-const uint8_t PIN_LED_STATUS = 13;
+const uint8_t PIN_LED_STATUS = 2; //D2 --> onboard LED
 
 //Trigger Pin fuer HC-SR04
-#define TRIGPIN 4 //D2
-#define ECHOPIN 5 //D1
+#define TRIGPIN 22 //D22 GIPO22
+#define ECHOPIN 21 //D21 GIPO21
 //wenn eine Drone erkannt wird einene effect durchfuhren, dieser wird dann nach der aufgefuhrten Zeit wieder deaktiviert
-#define DRONEDETECTTIMEOUT 5 //5 sec
+#define DRONEDETECTTIMEOUT 3 //5 sec
 
-#define DISTANCETHRESHOLD 20
+#define DISTANCETHRESHOLD 60
 #define GATESWITCHOFFTIME 300 //300 sec nach letzten Dronendruchflug
 
 //-------------------------------------------------------
@@ -83,18 +83,13 @@ struct_message recData;   //data received*/
 //bei dem Wert 0 wird der ESP in den Deepsleep ueberfuert
 uint8_t brightnesses[] = { 255, 128, 64, 0 };
 uint8_t currentBrightnessIndex = 0;
-
-uint8_t currentPatternIndex = 0; // Index number of which pattern is current
+uint8_t currentPatternIndex = random(0, patternsCount-1); // Zufälliger Index von 0 bis patternsCount-1
 
 unsigned long cyclePatternTimeout = 0;
 uint8_t currentPaletteIndex = 0;
 unsigned long paletteTimeout = 0;
 
 bool ledStatus = false;
-
-float voltageBuffer[NUM_VOLTAGE_VALUES] = {0};  // Array für die letzten 10 Spannungswerte
-int voltageBufferIndex = 0;                    // Aktueller Index im Array
-float voltageSum = 0;                          // Laufende Summe der Spannungswerte
 
 unsigned long gateOnTime = 0;
 uint8_t isUltrasonicSensorHealthy = 0;
@@ -106,10 +101,10 @@ Button buttonPalette(PIN_BUTTON_PALETTE);
 
 enum State {
   STATE_NORMAL,
-  STATE_LOW_BATTERY,
   STATE_DRONE_DETECTED,
   STATE_SLEEP,
-  STATE_READY/*,
+  STATE_READY,
+  STATE_EMPTY_BATTERY/*,
   STATE_GAME1*/
 };
 
@@ -117,6 +112,9 @@ State currentState = STATE_NORMAL;
 
 unsigned long stateStartTime = 0;
 unsigned long stateDuration = 0; // Dauer des aktuellen Zustands in Millisekunden
+
+unsigned long batteryLowStartTime = 0;  // Zeitpunkt, ab dem die Batteriespannung zu niedrig war
+bool isBatteryLow = false;             // Flag, ob die Batteriespannung niedrig ist
 
 /*uint8_t gameMode = 0;*/
 
@@ -185,24 +183,33 @@ void nextPalette()
 }
 
 float getBatteryVoltage() {
+    const float referenceVoltage = 3.3;  // Betriebsspannung des ESP32 in Volt (max. 3.3V)
+    //const int adcResolution = 4096;  // 12-Bit-Auflösung (2^12 = 4096)
+    const int adcResolution = 256;  // 8-Bit-Auflösung (2^8 = 256)
+
+    int adcValue = analogRead(BAT_VOLTAGE_PIN);
     // Neuen Spannungswert lesen
-    float newVoltageValue = analogRead(BAT_VOLTAGE_PIN);  // Analogen Spannungswert lesen
-    // Ältesten Spannungswert von der Summe abziehen
-    voltageSum -= voltageBuffer[voltageBufferIndex];
-    // Neuen Spannungswert in das Array speichern
-    voltageBuffer[voltageBufferIndex] = newVoltageValue;
-    // Neuen Spannungswert zur Summe hinzufügen
-    voltageSum += newVoltageValue;
-    // Index auf den nächsten Platz verschieben (Ringpuffer)
-    voltageBufferIndex = (voltageBufferIndex + 1) % NUM_VOLTAGE_VALUES;
-    // Durchschnitt berechnen
-    float averageVoltage = voltageSum / NUM_VOLTAGE_VALUES;
-    // Spannung umrechnen
-    float convertedVoltage = (averageVoltage / 1024.0) * 5.0;  // In 5V-Skala umrechnen
-    float batteryVoltage = convertedVoltage * VOLTAGE_FACTOR; // Tatsächliche Batteriespannung
+    float newVoltageValue = (adcValue / (float)adcResolution) * referenceVoltage; // Analogen Spannungswert lesen
+    float batteryVoltage = newVoltageValue * VOLTAGE_FACTOR; // Tatsächliche Batteriespannung
     // Debug-Ausgabe (optional)
-    //Serial.print("batteryVoltage: ");
-    //Serial.println(batteryVoltage);
+
+      // Umwandlung der Werte in Strings und Ersetzen von Punkten durch Kommas
+    String adcValueStr = String(adcValue);
+    String newVoltageValueStr = String(newVoltageValue);
+    String batteryVoltageStr = String(batteryVoltage);  
+
+    adcValueStr.replace(".", ",");
+    newVoltageValueStr.replace(".", ",");
+    batteryVoltageStr.replace(".", ",");
+
+    // Debug-Ausgabe mit Komma als Dezimaltrennzeichen
+    Serial.print("adcValue: ;");
+    Serial.print(adcValueStr);
+    Serial.print("\t;newVoltageValue: ;");
+    Serial.print(newVoltageValueStr);
+    Serial.print("\t;batteryVoltage: ;");
+    Serial.println(batteryVoltageStr);
+
     return batteryVoltage;
 }
 
@@ -230,8 +237,8 @@ void checkDistanceThreshold() {
   // Calculate the distance in cm
   distanceCm = (duration/2) / 29.1;
 
-  Serial.print("distanceCm: ");
-  Serial.println(distanceCm);
+  //Serial.print("distanceCm: ");
+  //Serial.println(distanceCm);
 
   if (distanceCm > 0){
     isUltrasonicSensorHealthy = 0;
@@ -282,10 +289,22 @@ void handleInput() {
   }
 }
 
-void handleLowBattery() {
-  Serial.flush();
-  fill_solid(leds, NUM_LEDS, CRGB::Red);
+void handleEmptyBattery() {
+  u_int8_t specialpatternsnumber = 1; //batteryEmpty();
+  // Call the current pattern function once, updating the 'leds' array
+  specialpatterns[specialpatternsnumber]();
+  currentPalette = palettes[currentPaletteIndex];
   FastLED.show();
+  FastLED.delay(1000 / FRAMES_PER_SECOND);  
+}
+
+void handleLowBattery() {
+  u_int8_t specialpatternsnumber = 4; //batteryLow();
+  // Call the current pattern function once, updating the 'leds' array
+  specialpatterns[specialpatternsnumber]();
+  currentPalette = palettes[currentPaletteIndex];
+  FastLED.show();
+  FastLED.delay(1000 / FRAMES_PER_SECOND);  
 }
 
 void handleSleep() {
@@ -383,8 +402,8 @@ State changeState(State newState, unsigned long duration = 0) {
 
     // Ausgabe der entsprechenden Nachricht basierend auf dem neuen Zustand
     switch (newState) {
-      case STATE_LOW_BATTERY:
-        Serial.println("STATE_LOW_BATTERY");
+      case STATE_EMPTY_BATTERY:
+        Serial.println("STATE_EMPTY_BATTERY");
         break;
       case STATE_SLEEP:
         Serial.println("STATE_SLEEP");
@@ -411,9 +430,21 @@ State changeState(State newState, unsigned long duration = 0) {
 void updateState() {
   // Zustandswechsel nur prüfen, wenn keine Zeitbegrenzung aktiv ist
   if (stateDuration == 0 || millis() - stateStartTime >= stateDuration) {
-    // Prüfen, ob die Batterie zu niedrig ist
+
     if (getBatteryVoltage() <= SWITCH_OFF_VOLTAGE) {
-      changeState(STATE_LOW_BATTERY);
+      if (!isBatteryLow) {
+        // Batteriespannung erstmals zu niedrig, Startzeit setzen
+        isBatteryLow = true;
+        batteryLowStartTime = millis();
+      }
+    } else if (isBatteryLow && millis() - batteryLowStartTime >= BATTERYCHECKINVERTVAL) {
+      // Batterie ist nicht mehr niedrig, nach Haltezeit zurücksetzen
+      isBatteryLow = false;
+    }
+
+    // Prüfen, ob der Zustand auf STATE_EMPTY_BATTERY geändert werden muss
+    if (isBatteryLow) {
+      changeState(STATE_EMPTY_BATTERY);
     } else if (brightnesses[currentBrightnessIndex] == 0) {  // Wenn die Helligkeit 0 ist, in den Schlafmodus wechseln
       changeState(STATE_SLEEP);
     } else if (distanceCm <= DISTANCETHRESHOLD && distanceCm > 1) { // Überprüfen, ob eine Drohne erkannt wurde und sicherstellen, dass der sensor nicht defekt ist
@@ -431,8 +462,13 @@ void updateState() {
 void setup() {
   Serial.begin(115200);
   Serial.println("setup");
-  
+
   delay(3000); // 3 second delay for recovery
+
+  pinMode(BAT_VOLTAGE_PIN, INPUT_PULLUP);
+  //analogReadResolution(12);  // Werte können 9, 10, 11 oder 12 sein
+  analogReadResolution(8);  // Werte: 8-Bit-Auflösung (256 Stufen)
+  analogSetAttenuation(ADC_11db); // Bereich 0 bis ~3.3V (11dB für max. Spannungsbereich)
 
   /*WiFi.mode(WIFI_STA);
 
@@ -460,11 +496,11 @@ void setup() {
   pinMode(ECHOPIN, INPUT); // Sets the echoPin as an Input
 
   setNumLeds(NUM_LEDS);
-  FastLED.setMaxPowerInVoltsAndMilliamps(5, 500);
-
+  // limit my draw to 3A at 5v of power draw
+  FastLED.setMaxPowerInVoltsAndMilliamps(5,5000);
   // tell FastLED about the LED strip configuration
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
-
+  
   // set master brightness control
   FastLED.setBrightness(brightnesses[currentBrightnessIndex]);
 
@@ -484,8 +520,8 @@ void loop()
   updateState();
 
   switch (currentState) {
-    case STATE_LOW_BATTERY:
-      handleLowBattery();
+    case STATE_EMPTY_BATTERY:
+      handleEmptyBattery();
       break;
     case STATE_SLEEP:
       handleSleep();
