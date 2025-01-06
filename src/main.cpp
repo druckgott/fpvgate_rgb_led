@@ -37,6 +37,7 @@ FASTLED_USING_NAMESPACE
 #define BAT_VOLTAGE_PIN 35 //D35 for ANALOG GIPO35
 #define VOLTAGE_FACTOR 4.06  //Resistors Ration Factor
 #define SWITCH_OFF_VOLTAGE 11.3 //11V fuer 3S
+//#define SWITCH_OFF_VOLTAGE 1 //fürs testen am USB Port
 //#define BATTERYCHECKINVERTVAL 2000 //so lange wird der status Batterie Low mindestens gehalten
 #define LOW_BATTERY_COUNT 150 //wenn 100x der Wert unter dem Switchoff wert hintereinander ist schaltet das Gate aus
 
@@ -53,10 +54,10 @@ FASTLED_USING_NAMESPACE
 
 //Effekte automatisch durchschallten (cyclePalettes) bei 1, Zeitdauer festlegen (paletteDuration)
 bool cyclePattern = true;
-uint16_t cyclePatternDuration = 20; //sec
+uint16_t cyclePatternDuration = 60; //sec
 //Farbpalleten durchschalten (nur bei effekten mit dem Namen: contains_Palette)
 bool cyclePalette = true;
-uint16_t paletteDuration = 7; //sec
+uint16_t paletteDuration = 19; //sec
 
 //PIN des ESP´s
 const uint8_t PIN_LED_STATUS = 2; //D2 --> onboard LED
@@ -68,7 +69,7 @@ const uint8_t PIN_LED_STATUS = 2; //D2 --> onboard LED
 #define DRONEDETECTTIMEOUT 3 //5 sec
 
 #define DISTANCETHRESHOLD 60
-#define GATESWITCHOFFTIME 300 //300 sec nach letzten Dronendruchflug
+#define GATESWITCHOFFTIME 180 //3 min (180 sec) nach letzten Dronendruchflug
 
 //-------------------------------------------------------
 

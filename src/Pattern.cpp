@@ -400,10 +400,10 @@ void droneDetected() {
     uint8_t numBeams = 4;        // Anzahl der Strahlen
     uint8_t beamWidth = 4;       // Breite jedes Strahls (in LEDs)
     uint8_t rotationSpeed = 1;   // Geschwindigkeit der Rotation
-    uint8_t angleOffset = 360 / numBeams; // Abstand zwischen den Strahlen (120° für 3 Strahlen)
+    uint8_t angleOffset = numleds / numBeams; // Gleichmäßiger Abstand zwischen den Strahlen
 
     // Neon-Style-Farben
-    CRGB colors[] = {CRGB::Cyan, CRGB::Magenta, CRGB::Lime};
+    CRGB colors[] = {CRGB::Cyan, CRGB::Magenta, CRGB::Lime, CRGB::Orange};
 
     // LEDs löschen, damit alte Effekte verschwinden
     fill_solid(leds, numleds, CRGB::Black);
