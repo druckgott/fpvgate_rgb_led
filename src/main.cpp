@@ -37,7 +37,8 @@ FASTLED_USING_NAMESPACE
 #define BAT_VOLTAGE_PIN 35 //D35 for ANALOG GIPO35
 #define VOLTAGE_FACTOR 4.06  //Resistors Ration Factor
 #define SWITCH_OFF_VOLTAGE 11.3 //11V fuer 3S
-#define BATTERYCHECKINVERTVAL 1000 //so lange wird der status Batterie Low mindestens gehalten
+//#define BATTERYCHECKINVERTVAL 2000 //so lange wird der status Batterie Low mindestens gehalten
+#define LOW_BATTERY_COUNT 150 //wenn 100x der Wert unter dem Switchoff wert hintereinander ist schaltet das Gate aus
 
 //LED Config
 //#define CLK_PIN     2
@@ -194,7 +195,7 @@ float getBatteryVoltage() {
     // Debug-Ausgabe (optional)
 
       // Umwandlung der Werte in Strings und Ersetzen von Punkten durch Kommas
-    String adcValueStr = String(adcValue);
+    /*String adcValueStr = String(adcValue);
     String newVoltageValueStr = String(newVoltageValue);
     String batteryVoltageStr = String(batteryVoltage);  
 
@@ -208,7 +209,7 @@ float getBatteryVoltage() {
     Serial.print("\t;newVoltageValue: ;");
     Serial.print(newVoltageValueStr);
     Serial.print("\t;batteryVoltage: ;");
-    Serial.println(batteryVoltageStr);
+    Serial.println(batteryVoltageStr);*/
 
     return batteryVoltage;
 }
@@ -427,21 +428,32 @@ State changeState(State newState, unsigned long duration = 0) {
   return newState;
 }
 
+  static int lowBatteryCount = 0; // Zähler für aufeinanderfolgende niedrige Spannungen
+
 void updateState() {
+
+
   // Zustandswechsel nur prüfen, wenn keine Zeitbegrenzung aktiv ist
   if (stateDuration == 0 || millis() - stateStartTime >= stateDuration) {
 
     if (getBatteryVoltage() <= SWITCH_OFF_VOLTAGE) {
-      if (!isBatteryLow) {
-        // Batteriespannung erstmals zu niedrig, Startzeit setzen
+      lowBatteryCount++; // Zähler erhöhen, wenn die Spannung zu niedrig ist
+      if (!isBatteryLow && lowBatteryCount >= LOW_BATTERY_COUNT) {
+        // Batteriespannung ist dreimal hintereinander zu niedrig
         isBatteryLow = true;
         batteryLowStartTime = millis();
       }
-    } else if (isBatteryLow && millis() - batteryLowStartTime >= BATTERYCHECKINVERTVAL) {
-      // Batterie ist nicht mehr niedrig, nach Haltezeit zurücksetzen
-      isBatteryLow = false;
+    } else {
+      lowBatteryCount = 0; // Zähler zurücksetzen, wenn die Spannung wieder über dem Grenzwert ist
+      /*if (isBatteryLow && millis() - batteryLowStartTime >= BATTERYCHECKINVERTVAL) {
+        // Batterie ist nicht mehr niedrig, nach Haltezeit zurücksetzen
+        isBatteryLow = false;
+      }*/
     }
 
+
+    /*Serial.print(lowBatteryCount); // Ausgabe des Zählers
+    Serial.print("\t"); // Ausgabe des Zählers*/
     // Prüfen, ob der Zustand auf STATE_EMPTY_BATTERY geändert werden muss
     if (isBatteryLow) {
       changeState(STATE_EMPTY_BATTERY);
@@ -469,6 +481,7 @@ void setup() {
   //analogReadResolution(12);  // Werte können 9, 10, 11 oder 12 sein
   analogReadResolution(8);  // Werte: 8-Bit-Auflösung (256 Stufen)
   analogSetAttenuation(ADC_11db); // Bereich 0 bis ~3.3V (11dB für max. Spannungsbereich)
+  //analogReference(INTERNAL);
 
   /*WiFi.mode(WIFI_STA);
 
