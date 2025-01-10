@@ -35,10 +35,10 @@ FASTLED_USING_NAMESPACE
 
 //Batterie limit --> es wird ein spezieller Effekt gewahlt der anzeigt das die Batterie leer ist (5 rote leds in der Mitte des Rings)
 #define BAT_VOLTAGE_PIN 35 //D35 for ANALOG GIPO35
-#define VOLTAGE_FACTOR 4.06  //Resistors Ration Factor
+//#define VOLTAGE_FACTOR 4.06  //Resistors Ration Factor
+#define VOLTAGE_FACTOR 3.86  //Resistors Ration Factor --> 1 Gate hat einen anderen Faktor
 #define SWITCH_OFF_VOLTAGE 11.3 //11V fuer 3S
 //#define SWITCH_OFF_VOLTAGE 1 //fürs testen am USB Port
-//#define BATTERYCHECKINVERTVAL 2000 //so lange wird der status Batterie Low mindestens gehalten
 #define LOW_BATTERY_COUNT 150 //wenn 100x der Wert unter dem Switchoff wert hintereinander ist schaltet das Gate aus
 
 //LED Config
@@ -47,7 +47,8 @@ FASTLED_USING_NAMESPACE
 #define LED_PIN 4 //D4 GIPO4
 #define LED_TYPE    WS2812
 #define COLOR_ORDER GRB
-#define NUM_LEDS    75 //10mm breite Leds
+//#define NUM_LEDS    75 //10mm breite Leds
+#define NUM_LEDS    150 //5mm breite Leds
 
 //Updaterate der LEDS
 #define FRAMES_PER_SECOND  120
@@ -446,10 +447,6 @@ void updateState() {
       }
     } else {
       lowBatteryCount = 0; // Zähler zurücksetzen, wenn die Spannung wieder über dem Grenzwert ist
-      /*if (isBatteryLow && millis() - batteryLowStartTime >= BATTERYCHECKINVERTVAL) {
-        // Batterie ist nicht mehr niedrig, nach Haltezeit zurücksetzen
-        isBatteryLow = false;
-      }*/
     }
 
 
