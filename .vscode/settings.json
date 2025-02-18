@@ -7,6 +7,14 @@
         "ranges": "cpp",
         "utility": "cpp",
         "*.tcc": "cpp",
-        "string": "cpp"
+        "string": "cpp",
+        "memory": "cpp",
+        "istream": "cpp",
+        "functional": "cpp",
+        "tuple": "cpp",
+        "variant": "cpp",
+        "optional": "cpp",
+        "system_error": "cpp",
+        "regex": "cpp"
     }
 }

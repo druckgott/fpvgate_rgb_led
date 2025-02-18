@@ -1,5 +1,9 @@
 #include <FastLED.h>  // https://github.com/FastLED/FastLED
 #include <Button.h>   // https://github.com/madleech/Button
+#include <EEPROM.h>  // EEPROM für Speichern von Werte
+
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
 
 /*#ifdef ESP32
 #include <WiFi.h>
@@ -28,6 +32,12 @@ FASTLED_USING_NAMESPACE
 #warning "Requires FastLED 3.1 or later; check github for latest code."
 #endif
 
+// Zeitdauer (in Millisekunden), nach der der Server abgeschaltet wird
+#define SERVER_LIFETIME 600000  // 10 Minute
+// Definiere die SSID und das Passwort für den Hotspot
+const char *ssid = "ESP32_Hotspot";  // Name des Hotspots
+const char *password = "123456789";  // Passwort für den Hotspot
+
 //Pins fuer Buttons
 #define PIN_BUTTON_PATTERN 18 // D18 GPIO18
 #define PIN_BUTTON_PALETTE 99
@@ -35,10 +45,6 @@ FASTLED_USING_NAMESPACE
 
 //Batterie limit --> es wird ein spezieller Effekt gewahlt der anzeigt das die Batterie leer ist (5 rote leds in der Mitte des Rings)
 #define BAT_VOLTAGE_PIN 35 //D35 for ANALOG GIPO35
-//#define VOLTAGE_FACTOR 4.06  //Resistors Ration Factor
-#define VOLTAGE_FACTOR 3.86  //Resistors Ration Factor --> 1 Gate hat einen anderen Faktor
-#define SWITCH_OFF_VOLTAGE 11.3 //11V fuer 3S
-//#define SWITCH_OFF_VOLTAGE 1 //fürs testen am USB Port
 #define LOW_BATTERY_COUNT 150 //wenn 100x der Wert unter dem Switchoff wert hintereinander ist schaltet das Gate aus
 
 //LED Config
@@ -47,18 +53,11 @@ FASTLED_USING_NAMESPACE
 #define LED_PIN 4 //D4 GIPO4
 #define LED_TYPE    WS2812
 #define COLOR_ORDER GRB
-//#define NUM_LEDS    75 //10mm breite Leds
-#define NUM_LEDS    150 //5mm breite Leds
-
-//Updaterate der LEDS
-#define FRAMES_PER_SECOND  120
 
 //Effekte automatisch durchschallten (cyclePalettes) bei 1, Zeitdauer festlegen (paletteDuration)
 bool cyclePattern = true;
-uint16_t cyclePatternDuration = 60; //sec
 //Farbpalleten durchschalten (nur bei effekten mit dem Namen: contains_Palette)
 bool cyclePalette = true;
-uint16_t paletteDuration = 19; //sec
 
 //PIN des ESP´s
 const uint8_t PIN_LED_STATUS = 2; //D2 --> onboard LED
@@ -66,13 +65,41 @@ const uint8_t PIN_LED_STATUS = 2; //D2 --> onboard LED
 //Trigger Pin fuer HC-SR04
 #define TRIGPIN 22 //D22 GIPO22
 #define ECHOPIN 21 //D21 GIPO21
-//wenn eine Drone erkannt wird einene effect durchfuhren, dieser wird dann nach der aufgefuhrten Zeit wieder deaktiviert
-#define DRONEDETECTTIMEOUT 3 //5 sec
-
-#define DISTANCETHRESHOLD 60
-#define GATESWITCHOFFTIME 180 //3 min (180 sec) nach letzten Dronendruchflug
 
 //-------------------------------------------------------
+//Config ueber Webserver nur default werte
+
+// Batterie-Konfiguration
+float voltageFactor = 3.86;  // Resistor Ratio Factor --> Gate 1
+float switchOffVoltage = 11.30; // 11V für 3S
+int configNumLeds = 75; // Anzahl LEDs
+
+// LED Update-Rate
+int framesPerSecond = 120;
+
+// Effekteinstellungen
+uint16_t cyclePatternDuration = 60; // Sekunden
+uint16_t paletteDuration = 19; // Sekunden
+
+// Trigger HC-SR04
+//wenn eine Drone erkannt wird einene effect durchfuhren, dieser wird dann nach der aufgefuhrten Zeit wieder deaktiviert
+uint8_t droneDetectTimeout = 3; // 3 Sekunden
+
+int distanceThreshold = 60;
+int gateSwitchOffTime = 180; //3 min (180 sec) nach letzten Dronendruchflug
+
+// EEPROM Konfiguration
+#define EEPROM_SIZE 512  
+// EEPROM Adressen
+#define EEPROM_VOLTAGE_FACTOR_ADDR 0
+#define EEPROM_SWITCH_OFF_VOLTAGE_ADDR (EEPROM_VOLTAGE_FACTOR_ADDR + sizeof(float))
+#define EEPROM_NUM_LEDS_ADDR (EEPROM_SWITCH_OFF_VOLTAGE_ADDR + sizeof(int))
+#define EEPROM_FRAMES_PER_SECOND_ADDR (EEPROM_NUM_LEDS_ADDR + sizeof(int))
+#define EEPROM_CYCLE_PATTERN_DURATION_ADDR (EEPROM_FRAMES_PER_SECOND_ADDR + sizeof(int))
+#define EEPROM_PALETTE_DURATION_ADDR (EEPROM_CYCLE_PATTERN_DURATION_ADDR + sizeof(uint16_t))
+#define EEPROM_DRONEDETECTTIMEOUT_ADDR (EEPROM_PALETTE_DURATION_ADDR + sizeof(uint16_t))
+#define EEPROM_DISTANCETHRESHOLD_ADDR (EEPROM_DRONEDETECTTIMEOUT_ADDR + sizeof(uint8_t))
+#define EEPROM_GATESWITCHOFFTIME_ADDR (EEPROM_DISTANCETHRESHOLD_ADDR + sizeof(int))
 
 // Structure example to send data
 // Must match the receiver structure
@@ -82,6 +109,10 @@ const uint8_t PIN_LED_STATUS = 2; //D2 --> onboard LED
 } struct_message;
 
 struct_message recData;   //data received*/
+
+AsyncWebServer server(80);
+unsigned long serverStartTime;
+bool serverActive = true;
 
 //bei dem Wert 0 wird der ESP in den Deepsleep ueberfuert
 uint8_t brightnesses[] = { 255, 128, 64, 0 };
@@ -147,6 +178,197 @@ void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
     gameMode = 0;
   }
 }*/
+// Debug function to print the EEPROM values
+void debugEEPROMConfig() {
+  Serial.println("EEPROM Configuration Loaded:");
+  Serial.print("Voltage Factor: ");
+  Serial.println(voltageFactor);
+  
+  Serial.print("Switch Off Voltage: ");
+  Serial.println(switchOffVoltage);
+  
+  Serial.print("Number of LEDs: ");
+  Serial.println(configNumLeds);
+  
+  Serial.print("Frames per Second: ");
+  Serial.println(framesPerSecond);
+  
+  Serial.print("Cycle Pattern Duration: ");
+  Serial.println(cyclePatternDuration);
+  
+  Serial.print("Palette Duration: ");
+  Serial.println(paletteDuration);
+  
+  Serial.print("Drone Detect Timeout: ");
+  Serial.println(droneDetectTimeout);
+  
+  Serial.print("Distance Threshold: ");
+  Serial.println(distanceThreshold);
+  
+  Serial.print("Gate Switch Off Time: ");
+  Serial.println(gateSwitchOffTime);
+}
+
+void validateEEPROMValues() {
+  // Batterie-Konfiguration
+  if (isnan(voltageFactor) || voltageFactor < 0.0f || voltageFactor > 10.0f) {
+    Serial.println("Ungültiger Wert für Voltage Factor! Setze auf Standardwert.");
+    voltageFactor = 3.86f;  // Standardwert für Voltage Factor
+  }
+
+  if (switchOffVoltage < 0 || switchOffVoltage > 45) {
+    Serial.println("Ungültiger Wert für Switch Off Voltage! Setze auf Standardwert.");
+    switchOffVoltage = 11.30f;  // Standardwert für Switch Off Voltage
+  }
+
+  if (configNumLeds < 1 || configNumLeds > 1000) {
+    Serial.println("Ungültiger Wert für Number of LEDs! Setze auf Standardwert.");
+    configNumLeds = 75;  // Standardwert für Number of LEDs
+  }
+
+  // LED Update-Rate
+  if (framesPerSecond < 1 || framesPerSecond > 240) {
+    Serial.println("Ungültiger Wert für Frames per Second! Setze auf Standardwert.");
+    framesPerSecond = 120;  // Standardwert für Frames per Second
+  }
+
+  // Effekteinstellungen
+  if (cyclePatternDuration < 1 || cyclePatternDuration > 3600) {
+    Serial.println("Ungültiger Wert für Cycle Pattern Duration! Setze auf Standardwert.");
+    cyclePatternDuration = 60;  // Standardwert für Cycle Pattern Duration
+  }
+
+  if (paletteDuration < 1 || paletteDuration > 3600) {
+    Serial.println("Ungültiger Wert für Palette Duration! Setze auf Standardwert.");
+    paletteDuration = 19;  // Standardwert für Palette Duration
+  }
+
+  // Trigger HC-SR04
+  if (droneDetectTimeout < 1 || droneDetectTimeout > 60) {
+    Serial.println("Ungültiger Wert für Drone Detect Timeout! Setze auf Standardwert.");
+    droneDetectTimeout = 3;  // Standardwert für Drone Detect Timeout
+  }
+
+  if (distanceThreshold < 1 || distanceThreshold > 1000) {
+    Serial.println("Ungültiger Wert für Distance Threshold! Setze auf Standardwert.");
+    distanceThreshold = 60;  // Standardwert für Distance Threshold
+  }
+
+  if (gateSwitchOffTime < 1 || gateSwitchOffTime > 3600) {
+    Serial.println("Ungültiger Wert für Gate Switch Off Time! Setze auf Standardwert.");
+    gateSwitchOffTime = 180;  // Standardwert für Gate Switch Off Time
+  }
+}
+
+void loadConfigFromEEPROM() {
+  EEPROM.begin(EEPROM_SIZE);
+  EEPROM.get(EEPROM_VOLTAGE_FACTOR_ADDR, voltageFactor);
+  EEPROM.get(EEPROM_SWITCH_OFF_VOLTAGE_ADDR, switchOffVoltage);
+  EEPROM.get(EEPROM_NUM_LEDS_ADDR, configNumLeds);
+  EEPROM.get(EEPROM_FRAMES_PER_SECOND_ADDR, framesPerSecond);
+  EEPROM.get(EEPROM_CYCLE_PATTERN_DURATION_ADDR, cyclePatternDuration);
+  EEPROM.get(EEPROM_PALETTE_DURATION_ADDR, paletteDuration);
+  EEPROM.get(EEPROM_DRONEDETECTTIMEOUT_ADDR, droneDetectTimeout);
+  EEPROM.get(EEPROM_DISTANCETHRESHOLD_ADDR, distanceThreshold);
+  EEPROM.get(EEPROM_GATESWITCHOFFTIME_ADDR, gateSwitchOffTime);
+
+  // Werte nach dem Laden validieren
+  validateEEPROMValues();
+
+  // Call debug function to output values to Serial Monitor
+  debugEEPROMConfig();
+}
+
+void saveConfigToEEPROM() {
+  EEPROM.begin(EEPROM_SIZE);
+  EEPROM.put(EEPROM_VOLTAGE_FACTOR_ADDR, voltageFactor);
+  EEPROM.put(EEPROM_SWITCH_OFF_VOLTAGE_ADDR, switchOffVoltage);
+  EEPROM.put(EEPROM_NUM_LEDS_ADDR, configNumLeds);
+  EEPROM.put(EEPROM_FRAMES_PER_SECOND_ADDR, framesPerSecond);
+  EEPROM.put(EEPROM_CYCLE_PATTERN_DURATION_ADDR, cyclePatternDuration);
+  EEPROM.put(EEPROM_PALETTE_DURATION_ADDR, paletteDuration);
+  EEPROM.put(EEPROM_DRONEDETECTTIMEOUT_ADDR, droneDetectTimeout);
+  EEPROM.put(EEPROM_DISTANCETHRESHOLD_ADDR, distanceThreshold);
+  EEPROM.put(EEPROM_GATESWITCHOFFTIME_ADDR, gateSwitchOffTime);
+
+  // Werte nach dem Laden validieren
+  validateEEPROMValues();
+
+  // Call debug function to output values to Serial Monitor
+  debugEEPROMConfig();
+
+  EEPROM.commit();
+
+  //einmal kurz alle LEds ausmachen, damit wenn die Led anzahl umgestellt wird ersichtlich ist was umgestellt wurde
+  Serial.flush();
+  fill_solid(leds, configNumLeds, CRGB::Black);
+  FastLED.show();
+}
+
+void setupServer() {
+
+  WiFi.disconnect(true);
+  delay(1000);
+ 
+  // Starte den ESP32 im Access Point-Modus
+  WiFi.softAP(ssid, password);
+  delay(1000);
+  // Gib die IP-Adresse des Access Points aus
+  Serial.println("Hotspot gestartet!");
+  Serial.print("IP-Adresse des Hotspots: ");
+  Serial.println(WiFi.softAPIP());
+
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    String html = "<html><body><h2>ESP Einstellungen</h2>";
+    html += "<form action='/save' method='POST' onsubmit='return validateForm()'>";
+    html += "Voltage Factor: <input type='number' step='0.01' name='voltageFactor' value='" + String(voltageFactor) + "' id='voltageFactor'><br>";
+    html += "Switch Off Voltage: <input type='number' step='0.01' name='switchOffVoltage' value='" + String(switchOffVoltage) + "' id='switchOffVoltage'><br>";
+    html += "LEDs: <input type='number' name='configNumLeds' value='" + String(configNumLeds) + "' id='configNumLeds'><br>";
+    html += "FPS: <input type='number' name='framesPerSecond' value='" + String(framesPerSecond) + "' id='framesPerSecond'><br>";
+    html += "Cycle Pattern Duration: <input type='number' name='cyclePatternDuration' value='" + String(cyclePatternDuration) + "' id='cyclePatternDuration'><br>";
+    html += "Palette Duration: <input type='number' name='paletteDuration' value='" + String(paletteDuration) + "' id='paletteDuration'><br>";
+    html += "Drone Detect Timeout: <input type='number' name='droneDetectTimeout' value='" + String(droneDetectTimeout) + "' id='droneDetectTimeout'><br>";
+    html += "Distance Threshold: <input type='number' name='distanceThreshold' value='" + String(distanceThreshold) + "' id='distanceThreshold'><br>";
+    html += "Gate Switch Off Time: <input type='number' name='gateSwitchOffTime' value='" + String(gateSwitchOffTime) + "' id='gateSwitchOffTime'><br>";
+    html += "<input type='submit' value='Speichern'>";
+    html += "<script>";
+    html += "function validateForm() {";
+    html += "    var valid = true;";
+    html += "    var fields = ['voltageFactor', 'switchOffVoltage', 'configNumLeds', 'framesPerSecond', 'cyclePatternDuration', 'paletteDuration', 'droneDetectTimeout', 'distanceThreshold', 'gateSwitchOffTime'];";
+    html += "    fields.forEach(function(field) {";
+    html += "        var value = document.getElementById(field).value;";
+    html += "        if (!/^[0-9]+(\.[0-9]+)?$/.test(value)) {";  // Prüft, ob es eine Zahl ist
+    html += "            document.getElementById(field).style.backgroundColor = 'red';";
+    html += "            valid = false;";
+    html += "        } else {";
+    html += "            document.getElementById(field).style.backgroundColor = '';";
+    html += "        }";
+    html += "    });";
+    html += "    return valid;";
+    html += "}";
+    html += "</script>";
+    html += "</form></body></html>";
+    request->send(200, "text/html", html);
+});
+
+  server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
+      if (request->hasParam("voltageFactor", true)) voltageFactor = request->getParam("voltageFactor", true)->value().toFloat();
+      if (request->hasParam("switchOffVoltage", true)) switchOffVoltage = request->getParam("switchOffVoltage", true)->value().toFloat();
+      if (request->hasParam("configNumLeds", true)) configNumLeds = request->getParam("configNumLeds", true)->value().toInt();
+      if (request->hasParam("framesPerSecond", true)) framesPerSecond = request->getParam("framesPerSecond", true)->value().toInt();
+      if (request->hasParam("cyclePatternDuration", true)) cyclePatternDuration = request->getParam("cyclePatternDuration", true)->value().toInt();
+      if (request->hasParam("paletteDuration", true)) paletteDuration = request->getParam("paletteDuration", true)->value().toInt();
+      if (request->hasParam("droneDetectTimeout", true)) droneDetectTimeout = request->getParam("droneDetectTimeout", true)->value().toInt();
+      if (request->hasParam("distanceThreshold", true)) distanceThreshold = request->getParam("distanceThreshold", true)->value().toInt();
+      if (request->hasParam("gateSwitchOffTime", true)) gateSwitchOffTime = request->getParam("gateSwitchOffTime", true)->value().toInt();
+      
+      saveConfigToEEPROM();
+      //request->send(200, "text/html", "<h3>Gespeichert! <a href='/'>Zur&uuml;ck</a></h3>");
+      request->redirect("/");
+
+  });
+  server.begin();
+}
 
 // ISR-Funktion im IRAM speichern
 void IRAM_ATTR wakeUp() {
@@ -193,7 +415,7 @@ float getBatteryVoltage() {
     int adcValue = analogRead(BAT_VOLTAGE_PIN);
     // Neuen Spannungswert lesen
     float newVoltageValue = (adcValue / (float)adcResolution) * referenceVoltage; // Analogen Spannungswert lesen
-    float batteryVoltage = newVoltageValue * VOLTAGE_FACTOR; // Tatsächliche Batteriespannung
+    float batteryVoltage = newVoltageValue * voltageFactor; // Tatsächliche Batteriespannung
     // Debug-Ausgabe (optional)
 
       // Umwandlung der Werte in Strings und Ersetzen von Punkten durch Kommas
@@ -236,7 +458,7 @@ void checkDistanceThreshold() {
   digitalWrite(TRIGPIN, LOW);
 
   // Reads the echoPin, returns the sound wave travel time in microseconds
-  duration = pulseIn(ECHOPIN, HIGH, 20000);
+  duration = pulseIn(ECHOPIN, HIGH);
   // Calculate the distance in cm
   distanceCm = (duration/2) / 29.1;
 
@@ -247,12 +469,13 @@ void checkDistanceThreshold() {
     isUltrasonicSensorHealthy = 0;
   }
   // Check if the distance is greater than the threshold
-  if (distanceCm > 0 && distanceCm <= DISTANCETHRESHOLD) {
+  if (distanceCm > 0 && distanceCm <= distanceThreshold) {
     gateOnTime = millis();
   } else if (distanceCm == 0) {
     isUltrasonicSensorHealthy++;
     if(isUltrasonicSensorHealthy == 10) {
       Serial.println("HC-SR04 deaktiviert");
+      isUltrasonicSensorHealthy = 20;
     }
   }
 }
@@ -298,7 +521,7 @@ void handleEmptyBattery() {
   specialpatterns[specialpatternsnumber]();
   currentPalette = palettes[currentPaletteIndex];
   FastLED.show();
-  FastLED.delay(1000 / FRAMES_PER_SECOND);  
+  FastLED.delay(1000 / framesPerSecond);  
 }
 
 void handleLowBattery() {
@@ -307,13 +530,13 @@ void handleLowBattery() {
   specialpatterns[specialpatternsnumber]();
   currentPalette = palettes[currentPaletteIndex];
   FastLED.show();
-  FastLED.delay(1000 / FRAMES_PER_SECOND);  
+  FastLED.delay(1000 / framesPerSecond);  
 }
 
 void handleSleep() {
   Serial.println("Going down...");
   Serial.flush();
-  fill_solid(leds, NUM_LEDS, CRGB::Black);
+  fill_solid(leds, configNumLeds, CRGB::Black);
   FastLED.show();
 
 // Interrupts für Wakeup einrichten
@@ -344,7 +567,7 @@ void handleDroneDetected() {
   specialpatterns[specialpatternsnumber]();
   currentPalette = palettes[currentPaletteIndex];
   FastLED.show();
-  FastLED.delay(1000 / FRAMES_PER_SECOND);
+  FastLED.delay(1000 / framesPerSecond);
 }
 
 void handleGateReady() {
@@ -353,7 +576,7 @@ void handleGateReady() {
   specialpatterns[specialpatternsnumber]();
   currentPalette = palettes[currentPaletteIndex];
   FastLED.show();
-  FastLED.delay(1000 / FRAMES_PER_SECOND);
+  FastLED.delay(1000 / framesPerSecond);
 }
 
 /*void handleGame1() {
@@ -362,7 +585,7 @@ void handleGateReady() {
   specialpatterns[specialpatternsnumber]();
   currentPalette = palettes[currentPaletteIndex];
   FastLED.show();
-  FastLED.delay(1000 / FRAMES_PER_SECOND);
+  FastLED.delay(1000 / framesPerSecond);
 }*/
 
 void handleNormalOperation() {
@@ -371,7 +594,7 @@ void handleNormalOperation() {
   patterns[currentPatternIndex]();
   currentPalette = palettes[currentPaletteIndex];
   FastLED.show();
-  FastLED.delay(1000 / FRAMES_PER_SECOND);
+  FastLED.delay(1000 / framesPerSecond);
 
   // Update the hue and blend palettes every 40ms
   EVERY_N_MILLISECONDS(40) {
@@ -438,7 +661,7 @@ void updateState() {
   // Zustandswechsel nur prüfen, wenn keine Zeitbegrenzung aktiv ist
   if (stateDuration == 0 || millis() - stateStartTime >= stateDuration) {
 
-    if (getBatteryVoltage() <= SWITCH_OFF_VOLTAGE) {
+    if (getBatteryVoltage() <= switchOffVoltage) {
       lowBatteryCount++; // Zähler erhöhen, wenn die Spannung zu niedrig ist
       if (!isBatteryLow && lowBatteryCount >= LOW_BATTERY_COUNT) {
         // Batteriespannung ist dreimal hintereinander zu niedrig
@@ -457,9 +680,9 @@ void updateState() {
       changeState(STATE_EMPTY_BATTERY);
     } else if (brightnesses[currentBrightnessIndex] == 0) {  // Wenn die Helligkeit 0 ist, in den Schlafmodus wechseln
       changeState(STATE_SLEEP);
-    } else if (distanceCm <= DISTANCETHRESHOLD && distanceCm > 1) { // Überprüfen, ob eine Drohne erkannt wurde und sicherstellen, dass der sensor nicht defekt ist
-      changeState(STATE_DRONE_DETECTED, DRONEDETECTTIMEOUT);
-    } else if (millis() - gateOnTime >= GATESWITCHOFFTIME*1000 && isUltrasonicSensorHealthy < 10) { //wenn eine drone gefunden wurde dann auch noch prüfen das das Gate dann irgendwann ausgeht und sicherstellen, dass der sensor nicht defekt ist
+    } else if (distanceCm <= distanceThreshold && distanceCm > 1 && isUltrasonicSensorHealthy < 10) { // Überprüfen, ob eine Drohne erkannt wurde und sicherstellen, dass der sensor nicht defekt ist
+      changeState(STATE_DRONE_DETECTED, droneDetectTimeout);
+    } else if (millis() - gateOnTime >= gateSwitchOffTime*1000 && isUltrasonicSensorHealthy < 10) { //wenn eine drone gefunden wurde dann auch noch prüfen das das Gate dann irgendwann ausgeht und sicherstellen, dass der sensor nicht defekt ist
       changeState(STATE_READY);
     /*} else if (gameMode == 1) {
       changeState(STATE_GAME1);*/
@@ -473,7 +696,11 @@ void setup() {
   Serial.begin(115200);
   Serial.println("setup");
 
+  loadConfigFromEEPROM(); // Lade gespeicherte Konfiguration
   delay(3000); // 3 second delay for recovery
+  
+  setupServer();
+  serverStartTime = millis();
 
   pinMode(BAT_VOLTAGE_PIN, INPUT_PULLUP);
   //analogReadResolution(12);  // Werte können 9, 10, 11 oder 12 sein
@@ -506,11 +733,11 @@ void setup() {
   pinMode(TRIGPIN, OUTPUT); // Sets the trigPin as an Output
   pinMode(ECHOPIN, INPUT); // Sets the echoPin as an Input
 
-  setNumLeds(NUM_LEDS);
+  setNumLeds(configNumLeds);
   // limit my draw to 3A at 5v of power draw
   FastLED.setMaxPowerInVoltsAndMilliamps(5,5000);
   // tell FastLED about the LED strip configuration
-  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, configNumLeds).setCorrection(TypicalLEDStrip);
   
   // set master brightness control
   FastLED.setBrightness(brightnesses[currentBrightnessIndex]);
@@ -554,6 +781,11 @@ void loop()
 
   // Verarbeite Benutzereingaben, falls der Zustand dies zulässt
   handleInput();
+
+  if (millis() - serverStartTime > SERVER_LIFETIME && serverActive) {
+    server.end();
+    serverActive = false;
+  }
 }
 
 
