@@ -1,6 +1,8 @@
 # FPV Dronen Racing Gate mit LEDs
 
-
+![Uploading 20250219_183212.jpg…]()
+![20250219_183158](https://github.com/user-attachments/assets/7338b2d5-b84f-4f82-a150-e6dfc3b2d20c)
+![20250219_183155](https://github.com/user-attachments/assets/4544a528-ef4a-4705-941a-4d79606e582f)
 
 ## Features
 
