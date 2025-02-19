@@ -4,6 +4,8 @@
 
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
+#include <ArduinoJson.h>
+
 
 /*#ifdef ESP32
 #include <WiFi.h>
@@ -33,7 +35,8 @@ FASTLED_USING_NAMESPACE
 #endif
 
 // Zeitdauer (in Millisekunden), nach der der Server abgeschaltet wird
-#define SERVER_LIFETIME 600000  // 10 Minute
+#define SERVER_LIFETIME 300000  // 5 Minute
+unsigned long sendIntervalws = 500;  // Nachricht alle 500ms an Webseite senden
 // Definiere die SSID und das Passwort für den Hotspot
 const char *ssid = "ESP32_Hotspot";  // Name des Hotspots
 const char *password = "123456789";  // Passwort für den Hotspot
@@ -111,8 +114,14 @@ int gateSwitchOffTime = 180; //3 min (180 sec) nach letzten Dronendruchflug
 struct_message recData;   //data received*/
 
 AsyncWebServer server(80);
+// WebSocket-Handler hinzufügen
+AsyncWebSocket ws("/ws");  // WebSocket-Server unter /ws
 unsigned long serverStartTime;
 bool serverActive = true;
+unsigned long lastSentws = 0;
+
+// JSON-Objekt erstellen
+DynamicJsonDocument doc(1024);
 
 //bei dem Wert 0 wird der ESP in den Deepsleep ueberfuert
 uint8_t brightnesses[] = { 255, 128, 64, 0 };
@@ -149,7 +158,13 @@ unsigned long stateDuration = 0; // Dauer des aktuellen Zustands in Millisekunde
 
 unsigned long batteryLowStartTime = 0;  // Zeitpunkt, ab dem die Batteriespannung zu niedrig war
 bool isBatteryLow = false;             // Flag, ob die Batteriespannung niedrig ist
+static int lowBatteryCount = 0; // Zähler für aufeinanderfolgende niedrige Spannungen
 
+// Sende den neuen Status an WebSocket-Clients
+String hotspot_current_state_info;
+String hotspot_runtime_info;
+String hotspot_voltage_info;
+String hotspot_distanceCm_info;
 /*uint8_t gameMode = 0;*/
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
@@ -305,6 +320,20 @@ void saveConfigToEEPROM() {
   FastLED.show();
 }
 
+void onWebSocketEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
+  if (type == WS_EVT_CONNECT) {
+      Serial.println("WebSocket-Client verbunden");
+  } else if (type == WS_EVT_DISCONNECT) {
+      Serial.println("WebSocket-Client getrennt");
+  }
+}
+
+// WebSocket-Initialisierung im Setup
+void setupWebSocket() {
+  ws.onEvent(onWebSocketEvent);
+  server.addHandler(&ws);
+}
+
 void setupServer() {
 
   WiFi.disconnect(true);
@@ -313,31 +342,38 @@ void setupServer() {
   // Starte den ESP32 im Access Point-Modus
   WiFi.softAP(ssid, password);
   delay(1000);
+  IPAddress IP = WiFi.softAPIP();
   // Gib die IP-Adresse des Access Points aus
   Serial.println("Hotspot gestartet!");
   Serial.print("IP-Adresse des Hotspots: ");
-  Serial.println(WiFi.softAPIP());
+  Serial.println(IP);
 
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    String html = "<html><body><h2>ESP Einstellungen</h2>";
-    html += "<form action='/save' method='POST' onsubmit='return validateForm()'>";
-    html += "Voltage Factor: <input type='number' step='0.01' name='voltageFactor' value='" + String(voltageFactor) + "' id='voltageFactor'><br>";
-    html += "Switch Off Voltage: <input type='number' step='0.01' name='switchOffVoltage' value='" + String(switchOffVoltage) + "' id='switchOffVoltage'><br>";
-    html += "LEDs: <input type='number' name='configNumLeds' value='" + String(configNumLeds) + "' id='configNumLeds'><br>";
-    html += "FPS: <input type='number' name='framesPerSecond' value='" + String(framesPerSecond) + "' id='framesPerSecond'><br>";
-    html += "Cycle Pattern Duration: <input type='number' name='cyclePatternDuration' value='" + String(cyclePatternDuration) + "' id='cyclePatternDuration'><br>";
-    html += "Palette Duration: <input type='number' name='paletteDuration' value='" + String(paletteDuration) + "' id='paletteDuration'><br>";
-    html += "Drone Detect Timeout: <input type='number' name='droneDetectTimeout' value='" + String(droneDetectTimeout) + "' id='droneDetectTimeout'><br>";
-    html += "Distance Threshold: <input type='number' name='distanceThreshold' value='" + String(distanceThreshold) + "' id='distanceThreshold'><br>";
-    html += "Gate Switch Off Time: <input type='number' name='gateSwitchOffTime' value='" + String(gateSwitchOffTime) + "' id='gateSwitchOffTime'><br>";
-    html += "<input type='submit' value='Speichern'>";
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String html = "<html><head>";
     html += "<script>";
+      // Zeit umrechenen f
+    html += "function formatTime(millis) {";
+    html += "  let seconds = Math.floor(millis / 1000);";  // Millisekunden in Sekunden umwandeln
+    html += "  let h = Math.floor(seconds / 3600);";
+    html += "  let m = Math.floor((seconds % 3600) / 60);";
+    html += "  let s = seconds % 60;";
+    html += "  return h.toString().padStart(2, '0') + ':' + m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0');";
+    html += "}";
+    html += "var socket = new WebSocket('ws://' + window.location.host + '/ws');";
+    html += "socket.onmessage = function(event) {";
+    // Hier wird erwartet, dass die Nachricht JSON ist                                                      
+    html += "  var data = JSON.parse(event.data);";
+    html += "  document.getElementById('hotspot_current_state_info').value = data.current_state;";
+    html += "  document.getElementById('hotspot_runtime_info').value = formatTime(data.runtime_info);"; 
+    html += "  document.getElementById('hotspot_voltage_info').value = data.voltage;";
+    html += "  document.getElementById('hotspot_distanceCm_info').value = data.distanceCm;";    
+    html += " };";
     html += "function validateForm() {";
     html += "    var valid = true;";
     html += "    var fields = ['voltageFactor', 'switchOffVoltage', 'configNumLeds', 'framesPerSecond', 'cyclePatternDuration', 'paletteDuration', 'droneDetectTimeout', 'distanceThreshold', 'gateSwitchOffTime'];";
     html += "    fields.forEach(function(field) {";
     html += "        var value = document.getElementById(field).value;";
-    html += "        if (!/^[0-9]+(\.[0-9]+)?$/.test(value)) {";  // Prüft, ob es eine Zahl ist
+    html += "        if (!/^[0-9]+(\\.[0-9]+)?$/.test(value)) {";  
     html += "            document.getElementById(field).style.backgroundColor = 'red';";
     html += "            valid = false;";
     html += "        } else {";
@@ -346,10 +382,64 @@ void setupServer() {
     html += "    });";
     html += "    return valid;";
     html += "}";
-    html += "</script>";
+    html += "</script></head><body>";
+    html += "<h2>ESP Gate Einstellungen</h2>";
+    html += "<form action='/save' method='POST' onsubmit='return validateForm()'>";
+    html += "<table>";
+    
+    // Eingabefelder als Tabellenzeilen
+    html += "<tr><td>Voltage Factor [-]:</td><td><input type='number' step='0.01' name='voltageFactor' value='" + String(voltageFactor) + "' id='voltageFactor'></td></tr>";
+    html += "<tr><td>Switch Off Voltage [V]:</td><td><input type='number' step='0.01' name='switchOffVoltage' value='" + String(switchOffVoltage) + "' id='switchOffVoltage'></td></tr>";
+    html += "<tr><td>LEDs [-]:</td><td><input type='number' name='configNumLeds' value='" + String(configNumLeds) + "' id='configNumLeds'></td></tr>";
+    html += "<tr><td>FPS [1/s]:</td><td><input type='number' name='framesPerSecond' value='" + String(framesPerSecond) + "' id='framesPerSecond'></td></tr>";
+    html += "<tr><td>Cycle Pattern Duration [s]:</td><td><input type='number' name='cyclePatternDuration' value='" + String(cyclePatternDuration) + "' id='cyclePatternDuration'></td></tr>";
+    html += "<tr><td>Palette Duration [s]:</td><td><input type='number' name='paletteDuration' value='" + String(paletteDuration) + "' id='paletteDuration'></td></tr>";
+    html += "<tr><td>Drone Detect Timeout [s]:</td><td><input type='number' name='droneDetectTimeout' value='" + String(droneDetectTimeout) + "' id='droneDetectTimeout'></td></tr>";
+    html += "<tr><td>Distance Threshold [cm]:</td><td><input type='number' name='distanceThreshold' value='" + String(distanceThreshold) + "' id='distanceThreshold'></td></tr>";
+    html += "<tr><td>Gate Switch Off Time [s]:</td><td><input type='number' name='gateSwitchOffTime' value='" + String(gateSwitchOffTime) + "' id='gateSwitchOffTime'></td></tr>";
+    html += "<tr><td colspan='2'><input type='submit' value='Speichern'></td></tr>";
+    html += "</table>";
+
+    html += "<h2>ESP Gate Status</h2>";
+    html += "<table>";
+    html += "<tr><td>Current State [-]:</td><td><input type='text' name='hotspot_current_state_info' value='" + String(hotspot_current_state_info) + "' id='hotspot_current_state_info' readonly></td></tr>";
+    html += "<tr><td>Current Voltage [V]:</td><td><input type='text' name='hotspot_voltage_info' value='" + String(hotspot_voltage_info) + "' id='hotspot_voltage_info' readonly></td></tr>";
+    html += "<tr><td>Current distance [cm]:</td><td><input type='text' name='hotspot_distanceCm_info' value='" + String(hotspot_distanceCm_info) + "' id='hotspot_distanceCm_info' readonly></td></tr>";
+    html += "<tr><td>Hotspot remaining time [s]:</td><td><input type='text' name='hotspot_runtime_info' value='" + String(hotspot_runtime_info) + "' id='hotspot_runtime_info' readonly></td></tr>";
+    html += "</table>";
     html += "</form></body></html>";
+
     request->send(200, "text/html", html);
-});
+  });
+
+  // Android Captive Portal Request
+  server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/plain", "You were sent here by a captive portal after requesting generate_204");
+    Serial.println("requested /generate_204");
+  });
+
+  // Apple Captive Portal Request
+  server.on("/hotspot-detect.html", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/plain", "You were sent here by a captive portal after requesting hotspot-detect.html");
+    Serial.println("requested /hotspot-detect.html");
+  });
+
+  // Alternative für einige Apple-Geräte (iOS/macOS)
+  server.on("/library/test/success.html", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/plain", "Apple captive portal check.");
+    Serial.println("requested /library/test/success.html");
+  });
+
+  //This is an example of a redirect type response.  onNotFound acts as a catch-all for any request not defined above
+  server.onNotFound([](AsyncWebServerRequest *request){
+    request->redirect("/");
+    Serial.print("server.notfound triggered: ");
+    Serial.println(request->url());       //This gives some insight into whatever was being requested
+  });
+
+  //server.on("/hotspot-detect.html", HTTP_GET, [&](AsyncWebServerRequest *request) {
+  //  request->send(200, "text/html", "<meta http-equiv='refresh' content='0; url=" + localIP + "'>");
+  //});
 
   server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
       if (request->hasParam("voltageFactor", true)) voltageFactor = request->getParam("voltageFactor", true)->value().toFloat();
@@ -363,10 +453,13 @@ void setupServer() {
       if (request->hasParam("gateSwitchOffTime", true)) gateSwitchOffTime = request->getParam("gateSwitchOffTime", true)->value().toInt();
       
       saveConfigToEEPROM();
+      lowBatteryCount = 0; // Zähler zurücksetzen, damit beim unstellen der switchOffVoltage die batterie wieder neu geladen wird
+      isBatteryLow = false;
       //request->send(200, "text/html", "<h3>Gespeichert! <a href='/'>Zur&uuml;ck</a></h3>");
       request->redirect("/");
 
   });
+
   server.begin();
 }
 
@@ -416,6 +509,9 @@ float getBatteryVoltage() {
     // Neuen Spannungswert lesen
     float newVoltageValue = (adcValue / (float)adcResolution) * referenceVoltage; // Analogen Spannungswert lesen
     float batteryVoltage = newVoltageValue * voltageFactor; // Tatsächliche Batteriespannung
+    hotspot_voltage_info = batteryVoltage;
+    
+
     // Debug-Ausgabe (optional)
 
       // Umwandlung der Werte in Strings und Ersetzen von Punkten durch Kommas
@@ -478,6 +574,8 @@ void checkDistanceThreshold() {
       isUltrasonicSensorHealthy = 20;
     }
   }
+  //info fuer hotspot
+  hotspot_distanceCm_info = distanceCm;
 }
 
 void handleInput() {
@@ -630,22 +728,28 @@ State changeState(State newState, unsigned long duration = 0) {
     switch (newState) {
       case STATE_EMPTY_BATTERY:
         Serial.println("STATE_EMPTY_BATTERY");
+        hotspot_current_state_info = "STATE_EMPTY_BATTERY";
         break;
       case STATE_SLEEP:
         Serial.println("STATE_SLEEP");
+        hotspot_current_state_info = "STATE_SLEEP";
         break;
       case STATE_READY:
         Serial.println("STATE_READY");
+        hotspot_current_state_info = "STATE_READY";
         break;
       case STATE_DRONE_DETECTED:
         Serial.println("STATE_DRONE_DETECTED");
+        hotspot_current_state_info = "STATE_DRONE_DETECTED";
         break;
       /*case STATE_GAME1:
         Serial.println("STATE_GAME1");
+        hotspot_current_state_info = "STATE_GAME1";
         break;*/
       case STATE_NORMAL:
       default:
         Serial.println("STATE_NORMAL");
+        hotspot_current_state_info = "STATE_NORMAL";
         break;
       // Weitere Fälle nach Bedarf hinzufügen
     }
@@ -653,10 +757,9 @@ State changeState(State newState, unsigned long duration = 0) {
   return newState;
 }
 
-  static int lowBatteryCount = 0; // Zähler für aufeinanderfolgende niedrige Spannungen
+
 
 void updateState() {
-
 
   // Zustandswechsel nur prüfen, wenn keine Zeitbegrenzung aktiv ist
   if (stateDuration == 0 || millis() - stateStartTime >= stateDuration) {
@@ -664,7 +767,7 @@ void updateState() {
     if (getBatteryVoltage() <= switchOffVoltage) {
       lowBatteryCount++; // Zähler erhöhen, wenn die Spannung zu niedrig ist
       if (!isBatteryLow && lowBatteryCount >= LOW_BATTERY_COUNT) {
-        // Batteriespannung ist dreimal hintereinander zu niedrig
+        // Batteriespannung ist LOW_BATTERY_COUNT hintereinander zu niedrig
         isBatteryLow = true;
         batteryLowStartTime = millis();
       }
@@ -690,15 +793,32 @@ void updateState() {
       changeState(STATE_NORMAL);
     }
   }
+
+  if ((millis() - lastSentws >= sendIntervalws) && serverActive) {
+    //werte auf Hotspot anpassen
+    doc["current_state"] = hotspot_current_state_info;
+    doc["runtime_info"] = hotspot_runtime_info;    
+    doc["voltage"] = hotspot_voltage_info;
+    doc["distanceCm"] = hotspot_distanceCm_info;
+    // WebSocket-Nachricht als JSON senden
+    String jsonString;
+    serializeJson(doc, jsonString);
+    // Nachricht über WebSocket senden
+    ws.textAll(jsonString);
+    lastSentws = millis();
+  }
+
 }
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("");
   Serial.println("setup");
 
   loadConfigFromEEPROM(); // Lade gespeicherte Konfiguration
   delay(3000); // 3 second delay for recovery
   
+  setupWebSocket();
   setupServer();
   serverStartTime = millis();
 
@@ -750,6 +870,9 @@ void setup() {
 
   pinMode(PIN_LED_STATUS, OUTPUT);
   digitalWrite(PIN_LED_STATUS, LOW);
+
+  //initialstate festlegen
+  changeState(STATE_NORMAL);
 }
 
 void loop()
@@ -782,9 +905,17 @@ void loop()
   // Verarbeite Benutzereingaben, falls der Zustand dies zulässt
   handleInput();
 
-  if (millis() - serverStartTime > SERVER_LIFETIME && serverActive) {
+  if (serverActive) {
+    hotspot_runtime_info = SERVER_LIFETIME - (millis() - serverStartTime);
+    ws.cleanupClients();  // WebSocket-Verbindungen verwalten
+  }
+
+  if ((millis() - serverStartTime > SERVER_LIFETIME) && serverActive) {
     server.end();
+    WiFi.softAPdisconnect(true);  // Deaktiviert den SoftAP und trennt alle verbundenen Clients
+    WiFi.mode(WIFI_OFF);          // Schaltet Wi-Fi vollständig aus
     serverActive = false;
+    Serial.println("Webserver abgeschalten");
   }
 }
 
