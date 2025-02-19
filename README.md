@@ -1,5 +1,7 @@
 # FPV Dronen Racing Gate mit LEDs
 
+
+
 ## Features
 
 - **LED Steuerung**:
@@ -111,3 +113,7 @@
 - Tasten und Interrupts ermöglichen eine benutzerfreundliche Steuerung.
 - Die Spannung wird kontinuierlich überwacht, um den Zustand "Low Battery" rechtzeitig anzuzeigen.
 - Der Ultraschallsensor wird genutzt, um Drohnen zu erkennen und spezielle Effekte zu aktivieren.
+  
+## Webserver zum einstellen:
+
+![grafik](https://github.com/user-attachments/assets/7558118f-5f06-4cd8-bc70-01f8f4152b70)
