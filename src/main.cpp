@@ -38,7 +38,7 @@ FASTLED_USING_NAMESPACE
 #define SERVER_LIFETIME 300000  // 5 Minute
 unsigned long sendIntervalws = 500;  // Nachricht alle 500ms an Webseite senden
 // Definiere die SSID und das Passwort für den Hotspot
-const char *ssid = "ESP32_Hotspot";  // Name des Hotspots
+const char *ssid = "Drone_Gate_4";  // Name des Hotspots
 const char *password = "123456789";  // Passwort für den Hotspot
 
 //Pins fuer Buttons
@@ -315,6 +315,7 @@ void saveConfigToEEPROM() {
   EEPROM.commit();
 
   //einmal kurz alle LEds ausmachen, damit wenn die Led anzahl umgestellt wird ersichtlich ist was umgestellt wurde
+  setNumLeds(configNumLeds);
   Serial.flush();
   fill_solid(leds, configNumLeds, CRGB::Black);
   FastLED.show();
